@@ -131,6 +131,23 @@ struct HIDAPyTorchPipelineOptions
       *this, "fake-quantize", llvm::cl::init(false),
       llvm::cl::desc("Trigger the fake quantization (just for testing use)")};
 
+  // Layout Partition Options
+  Option<bool> enableLayoutPartition{
+      *this, "enable-layout-partition", llvm::cl::init(false),
+      llvm::cl::desc("Enable layout-driven partitioning optimization")};
+
+  Option<int> numTiles{
+      *this, "num-tiles", llvm::cl::init(4),
+      llvm::cl::desc("Number of FPGA tiles for partitioning")};
+
+  Option<std::string> partitionTclOutput{
+      *this, "partition-tcl-output", llvm::cl::init("partition.tcl"),
+      llvm::cl::desc("Output path for partition TCL script")};
+
+  Option<double> partitionBalanceThreshold{
+      *this, "partition-balance-threshold", llvm::cl::init(0.3),
+      llvm::cl::desc("Resource balance threshold for partitioning (0.0-1.0)")};
+
   Option<unsigned> debugPoint{
       *this, "debug-point", llvm::cl::init(0),
       llvm::cl::desc("Stop the pipeline at the given debug point")};
@@ -304,6 +321,24 @@ void scalehls::registerHIDAPyTorchPipeline() {
         pm.addPass(scalehls::createArrayPartitionPass());
         pm.addPass(scalehls::createCreateHLSPrimitivePass());
         pm.addPass(mlir::createCanonicalizerPass());
+
+        if (opts.debugPoint == 14)
+          return;
+
+        // QoR estimation for resource collection.
+        pm.addPass(scalehls::createQoREstimationPass());
+        pm.addPass(mlir::createCanonicalizerPass());
+
+        if (opts.debugPoint == 15)
+          return;
+
+        // Layout-driven partitioning optimization.
+        if (opts.enableLayoutPartition) {
+          pm.addPass(scalehls::createLayoutPartitionPass(
+              opts.numTiles, opts.partitionTclOutput,
+              opts.partitionBalanceThreshold, /*enableCommOpt=*/true));
+          pm.addPass(mlir::createCanonicalizerPass());
+        }
       });
 }
 

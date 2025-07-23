@@ -95,7 +95,13 @@ struct FunctionInfo {
 struct LayoutPartitionPass : public PassWrapper<LayoutPartitionPass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(LayoutPartitionPass)
 
-  /// Command line options
+  /// Constructor with parameters
+  LayoutPartitionPass() = default;
+  LayoutPartitionPass(int tiles, std::string tclOutput, double threshold, bool commOpt)
+      : numTiles(tiles), tclOutputPath(tclOutput), balanceThreshold(threshold),
+        enableCommunicationOpt(commOpt) {}
+
+  /// Command line options (for standalone usage)
   Option<int> numTiles{*this, "tiles", llvm::cl::init(2),
                        llvm::cl::desc("Number of FPGA tiles/partitions")};
   
@@ -401,6 +407,14 @@ private:
 
 namespace scalehls {
 
+std::unique_ptr<Pass> createLayoutPartitionPass(int numTiles,
+                                                std::string tclOutput,
+                                                double balanceThreshold,
+                                                bool enableCommOpt) {
+  return std::make_unique<LayoutPartitionPass>(numTiles, tclOutput, balanceThreshold, enableCommOpt);
+}
+
+// Overload for backward compatibility (standalone usage)
 std::unique_ptr<Pass> createLayoutPartitionPass() {
   return std::make_unique<LayoutPartitionPass>();
 }

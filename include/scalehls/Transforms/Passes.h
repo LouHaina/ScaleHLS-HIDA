@@ -113,6 +113,10 @@ std::unique_ptr<Pass> createFuncPipeliningPass();
 std::unique_ptr<Pass> createLoopPipeliningPass();
 std::unique_ptr<Pass> createLowerAffinePass();
 std::unique_ptr<Pass> createQoREstimationPass(std::string qorTargetSpec = "");
+std::unique_ptr<Pass> createLayoutPartitionPass(int numTiles,
+                                                std::string tclOutput,
+                                                double balanceThreshold,
+                                                bool enableCommOpt);
 std::unique_ptr<Pass> createLayoutPartitionPass();
 
 #define GEN_PASS_CLASSES

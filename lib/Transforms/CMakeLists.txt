@@ -51,6 +51,7 @@ add_mlir_library(MLIRScaleHLSTransforms
   DesignSpaceExplore.cpp
   FuncDuplication.cpp
   FuncPreprocess.cpp
+  LayoutPartitionEnhanced.cpp
   Passes.cpp
   Utils.cpp
 

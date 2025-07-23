@@ -538,4 +538,30 @@ def QoREstimation : Pass<"scalehls-qor-estimation", "ModuleOp"> {
   ];
 }
 
+def LayoutPartition : Pass<"scalehls-layout-partition", "ModuleOp"> {
+  let summary = "Enhanced layout-driven partitioning optimization for HIDA";
+  let description = [{
+    This pass implements resource-aware partitioning of functions across FPGA tiles
+    to balance resource usage and minimize inter-tile communication. It collects
+    hardware resource usage from QoREstimationPass, applies a balanced partitioning
+    algorithm considering hardware resource constraints, annotates functions with
+    partition IDs, and generates TCL scripts for Vitis HLS synthesis.
+  }];
+  let constructor = "mlir::scalehls::createLayoutPartitionPass()";
+
+  let options = [
+    Option<"numTiles", "tiles", "int", /*default=*/"2",
+           "Number of FPGA tiles/partitions">,
+    Option<"tclOutputPath", "tcl-output", "std::string",
+           /*default=*/"\"partition.tcl\"",
+           "Output path for TCL script">,
+    Option<"balanceThreshold", "balance-threshold", "double",
+           /*default=*/"0.3",
+           "Resource balance threshold (0.0-1.0)">,
+    Option<"enableCommunicationOpt", "enable-comm-opt", "bool",
+           /*default=*/"true",
+           "Enable communication optimization">
+  ];
+}
+
 #endif // SCALEHLS_TRANSFORMS_PASSES_TD

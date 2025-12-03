@@ -59,14 +59,14 @@ void scalehls::registerScaleHLSDSEPipeline() {
 
 void scalehls::addCreateSubviewPasses(OpPassManager &pm,
                                       CreateSubviewMode mode) {
-  pm.addPass(scalehls::createCreateMemrefSubviewPass(mode));
+  pm.addNestedPass<func::FuncOp>(scalehls::createCreateMemrefSubviewPass(mode));
   pm.addPass(mlir::createCSEPass());
   pm.addPass(mlir::createCanonicalizerPass());
 }
 
 void scalehls::addSimplifyAffineLoopPasses(OpPassManager &pm) {
-  pm.addPass(mlir::createAffineLoopNormalizePass());
-  pm.addPass(mlir::createSimplifyAffineStructuresPass());
+  pm.addNestedPass<func::FuncOp>(mlir::createAffineLoopNormalizePass());
+  pm.addNestedPass<func::FuncOp>(mlir::createSimplifyAffineStructuresPass());
   pm.addPass(mlir::createCanonicalizerPass());
 }
 
@@ -76,6 +76,11 @@ struct HIDAPyTorchPipelineOptions
   Option<std::string> hlsTopFunc{
       *this, "top-func", llvm::cl::init("forward"),
       llvm::cl::desc("Specify the top function of the design")};
+
+  Option<std::string> targetSpec{
+      *this, "target-spec", llvm::cl::init("./config.json"),
+      llvm::cl::desc(
+          "File path: target backend specifications and configurations")};
 
   // Option<unsigned> optLevel{
   //     *this, "opt-level", llvm::cl::init(1),
@@ -161,8 +166,8 @@ void scalehls::registerHIDAPyTorchPipeline() {
       [](OpPassManager &pm, const HIDAPyTorchPipelineOptions &opts) {
         if (opts.tosaInput) {
           // TOSA optimization.
-          pm.addPass(scalehls::createTosaSimplifyGraphPass());
-          pm.addPass(scalehls::createCreateDataflowFromTosaPass());
+          pm.addNestedPass<func::FuncOp>(scalehls::createTosaSimplifyGraphPass());
+          pm.addNestedPass<func::FuncOp>(scalehls::createCreateDataflowFromTosaPass());
           pm.addPass(mlir::createCanonicalizerPass());
 
           // TOSA to Linalg conversion.
@@ -181,7 +186,7 @@ void scalehls::registerHIDAPyTorchPipeline() {
 
         // Linalg optimization.
         pm.addPass(mlir::createLinalgElementwiseOpFusionPass());
-        pm.addPass(scalehls::createCreateDataflowFromLinalgPass());
+        pm.addNestedPass<func::FuncOp>(scalehls::createCreateDataflowFromLinalgPass());
         pm.addPass(mlir::createConvertTensorToLinalgPass());
         pm.addPass(mlir::createCanonicalizerPass());
 
@@ -189,22 +194,22 @@ void scalehls::registerHIDAPyTorchPipeline() {
           return;
 
         // Bufferization.
-        pm.addPass(mlir::createLinalgBufferizePass());
+        pm.addNestedPass<func::FuncOp>(mlir::createLinalgBufferizePass());
         pm.addPass(arith::createArithBufferizePass());
-        pm.addPass(mlir::createTensorBufferizePass());
+        pm.addNestedPass<func::FuncOp>(mlir::createTensorBufferizePass());
         pm.addPass(func::createFuncBufferizePass());
         pm.addPass(bufferization::createBufferResultsToOutParamsPass());
-        pm.addPass(scalehls::createBufferizeDataflowPass());
+        pm.addNestedPass<func::FuncOp>(scalehls::createBufferizeDataflowPass());
         pm.addPass(mlir::createCanonicalizerPass());
 
         if (opts.debugPoint == 3)
           return;
 
         // Linalg to Affine conversion.
-        pm.addPass(mlir::createLinalgGeneralizationPass());
-        pm.addPass(scalehls::createSimplifyCopyPass());
-        pm.addPass(mlir::createConvertLinalgToAffineLoopsPass());
-        pm.addPass(scalehls::createLowerCopyToAffinePass());
+        pm.addNestedPass<func::FuncOp>(mlir::createLinalgGeneralizationPass());
+        pm.addNestedPass<func::FuncOp>(scalehls::createSimplifyCopyPass());
+        pm.addNestedPass<func::FuncOp>(mlir::createConvertLinalgToAffineLoopsPass());
+        pm.addNestedPass<func::FuncOp>(scalehls::createLowerCopyToAffinePass());
         pm.addPass(memref::createFoldMemRefAliasOpsPass());
         pm.addPass(mlir::createCanonicalizerPass());
 
@@ -212,13 +217,13 @@ void scalehls::registerHIDAPyTorchPipeline() {
           return;
 
         // Affine loop fusion.
-        pm.addPass(scalehls::createFuncPreprocessPass(opts.hlsTopFunc));
-        pm.addPass(scalehls::createAffineLoopFusionPass(opts.fusionTolerance));
+        pm.addNestedPass<func::FuncOp>(scalehls::createFuncPreprocessPass(opts.hlsTopFunc));
+        pm.addNestedPass<func::FuncOp>(scalehls::createAffineLoopFusionPass(opts.fusionTolerance));
         scalehls::addSimplifyAffineLoopPasses(pm);
         scalehls::addCreateSubviewPasses(pm);
-        pm.addPass(scalehls::createRaiseAffineToCopyPass());
-        pm.addPass(scalehls::createSimplifyCopyPass());
-        pm.addPass(scalehls::createLowerCopyToAffinePass());
+        pm.addNestedPass<func::FuncOp>(scalehls::createRaiseAffineToCopyPass());
+        pm.addNestedPass<func::FuncOp>(scalehls::createSimplifyCopyPass());
+        pm.addNestedPass<func::FuncOp>(scalehls::createLowerCopyToAffinePass());
         pm.addPass(memref::createFoldMemRefAliasOpsPass());
         pm.addPass(mlir::createCanonicalizerPass());
 
@@ -226,7 +231,7 @@ void scalehls::registerHIDAPyTorchPipeline() {
           return;
 
         // Place dataflow buffers.
-        pm.addPass(scalehls::createPlaceDataflowBufferPass(
+        pm.addNestedPass<func::FuncOp>(scalehls::createPlaceDataflowBufferPass(
             opts.externalBufferThreshold, opts.placeExternalBuffer));
 
         // if (opts.vectorize) {
@@ -238,13 +243,13 @@ void scalehls::registerHIDAPyTorchPipeline() {
           return;
 
         // Affine loop tiling.
-        pm.addPass(scalehls::createFuncPreprocessPass(opts.hlsTopFunc));
-        pm.addPass(bufferization::createBufferLoopHoistingPass());
-        pm.addPass(scalehls::createAffineLoopPerfectionPass());
-        pm.addPass(scalehls::createAffineLoopOrderOptPass());
+        pm.addNestedPass<func::FuncOp>(scalehls::createFuncPreprocessPass(opts.hlsTopFunc));
+        pm.addNestedPass<func::FuncOp>(bufferization::createBufferLoopHoistingPass());
+        pm.addNestedPass<func::FuncOp>(scalehls::createAffineLoopPerfectionPass());
+        pm.addNestedPass<func::FuncOp>(scalehls::createAffineLoopOrderOptPass());
         if (opts.loopTileSize != 1)
-          pm.addPass(scalehls::createAffineLoopTilePass(opts.loopTileSize));
-        pm.addPass(mlir::createSimplifyAffineStructuresPass());
+          pm.addNestedPass<func::FuncOp>(scalehls::createAffineLoopTilePass(opts.loopTileSize));
+        pm.addNestedPass<func::FuncOp>(mlir::createSimplifyAffineStructuresPass());
         pm.addPass(mlir::createCanonicalizerPass());
 
         if (opts.debugPoint == 7)
@@ -252,62 +257,62 @@ void scalehls::registerHIDAPyTorchPipeline() {
 
         // Local buffer allocation.
         scalehls::addCreateSubviewPasses(pm);
-        pm.addPass(scalehls::createCreateLocalBufferPass());
-        pm.addPass(scalehls::createLowerCopyToAffinePass());
+        pm.addNestedPass<func::FuncOp>(scalehls::createCreateLocalBufferPass());
+        pm.addNestedPass<func::FuncOp>(scalehls::createLowerCopyToAffinePass());
         pm.addPass(memref::createFoldMemRefAliasOpsPass());
-        pm.addPass(mlir::createSimplifyAffineStructuresPass());
+        pm.addNestedPass<func::FuncOp>(mlir::createSimplifyAffineStructuresPass());
         pm.addPass(mlir::createCanonicalizerPass());
 
         if (opts.debugPoint == 8)
           return;
 
         // Affine loop dataflowing.
-        pm.addPass(scalehls::createCollapseMemrefUnitDimsPass());
-        pm.addPass(scalehls::createAffineStoreForwardPass());
-        pm.addPass(scalehls::createCreateDataflowFromAffinePass());
-        pm.addPass(scalehls::createStreamDataflowTaskPass());
+        pm.addNestedPass<func::FuncOp>(scalehls::createCollapseMemrefUnitDimsPass());
+        pm.addNestedPass<func::FuncOp>(scalehls::createAffineStoreForwardPass());
+        pm.addNestedPass<func::FuncOp>(scalehls::createCreateDataflowFromAffinePass());
+        pm.addNestedPass<func::FuncOp>(scalehls::createStreamDataflowTaskPass());
         pm.addPass(mlir::createCanonicalizerPass());
 
         if (opts.debugPoint == 9)
           return;
 
         // Lower and optimize dataflow.
-        pm.addPass(scalehls::createLowerDataflowPass());
-        pm.addPass(scalehls::createEliminateMultiProducerPass());
-        pm.addPass(scalehls::createEliminateMultiConsumerPass());
-        pm.addPass(scalehls::createScheduleDataflowNodePass());
+        pm.addNestedPass<func::FuncOp>(scalehls::createLowerDataflowPass());
+        pm.addNestedPass<func::FuncOp>(scalehls::createEliminateMultiProducerPass());
+        pm.addNestedPass<func::FuncOp>(scalehls::createEliminateMultiConsumerPass());
+        pm.addNestedPass<func::FuncOp>(scalehls::createScheduleDataflowNodePass());
         if (opts.balanceDataflow.getValue())
-          pm.addPass(scalehls::createBalanceDataflowNodePass());
-        pm.addPass(scalehls::createLowerCopyToAffinePass());
-        pm.addPass(scalehls::createAffineStoreForwardPass());
+          pm.addNestedPass<func::FuncOp>(scalehls::createBalanceDataflowNodePass());
+        pm.addNestedPass<func::FuncOp>(scalehls::createLowerCopyToAffinePass());
+        pm.addNestedPass<func::FuncOp>(scalehls::createAffineStoreForwardPass());
         pm.addPass(mlir::createCanonicalizerPass());
 
         if (opts.debugPoint == 10)
           return;
 
         // Parallelize dataflow.
-        pm.addPass(scalehls::createParallelizeDataflowNodePass(
+        pm.addNestedPass<func::FuncOp>(scalehls::createParallelizeDataflowNodePass(
             opts.loopUnrollFactor, /*unrollPointLoopOnly=*/true,
             opts.complexityAware, opts.correlationAware));
-        pm.addPass(mlir::createSimplifyAffineStructuresPass());
-        pm.addPass(scalehls::createLegalizeDataflowPass());
+        pm.addNestedPass<func::FuncOp>(mlir::createSimplifyAffineStructuresPass());
+        pm.addNestedPass<func::FuncOp>(scalehls::createLegalizeDataflowPass());
         pm.addPass(mlir::createCanonicalizerPass());
 
         if (opts.debugPoint == 11)
           return;
 
         // Memory optimization.
-        pm.addPass(scalehls::createSimplifyAffineIfPass());
-        pm.addPass(scalehls::createAffineStoreForwardPass());
-        pm.addPass(scalehls::createReduceInitialIntervalPass());
-        pm.addPass(scalehls::createBufferVectorizePass());
+        pm.addNestedPass<func::FuncOp>(scalehls::createSimplifyAffineIfPass());
+        pm.addNestedPass<func::FuncOp>(scalehls::createAffineStoreForwardPass());
+        pm.addNestedPass<func::FuncOp>(scalehls::createReduceInitialIntervalPass());
+        pm.addNestedPass<func::FuncOp>(scalehls::createBufferVectorizePass());
         pm.addPass(mlir::createCanonicalizerPass());
 
         if (opts.debugPoint == 12)
           return;
 
         // Convert dataflow to func.
-        pm.addPass(scalehls::createCreateTokenStreamPass());
+        pm.addNestedPass<func::FuncOp>(scalehls::createCreateTokenStreamPass());
         pm.addPass(scalehls::createConvertDataflowToFuncPass());
         pm.addPass(mlir::createCanonicalizerPass());
 
@@ -317,16 +322,16 @@ void scalehls::registerHIDAPyTorchPipeline() {
         // Directive-level optimization.
         if (opts.axiInterface)
           pm.addPass(scalehls::createCreateAxiInterfacePass(opts.hlsTopFunc));
-        pm.addPass(scalehls::createLoopPipeliningPass());
+        pm.addNestedPass<func::FuncOp>(scalehls::createLoopPipeliningPass());
         pm.addPass(scalehls::createArrayPartitionPass());
-        pm.addPass(scalehls::createCreateHLSPrimitivePass());
+        pm.addNestedPass<func::FuncOp>(scalehls::createCreateHLSPrimitivePass());
         pm.addPass(mlir::createCanonicalizerPass());
 
         if (opts.debugPoint == 14)
           return;
 
         // QoR estimation for resource collection.
-        pm.addPass(scalehls::createQoREstimationPass());
+        pm.addPass(scalehls::createQoREstimationPass(opts.targetSpec));
         pm.addPass(mlir::createCanonicalizerPass());
 
         if (opts.debugPoint == 15)
@@ -354,7 +359,7 @@ void scalehls::registerHIDAPyTorchPipelinePost() {
               opts.loopUnrollFactor, /*unrollPointLoopOnly=*/true));
           // pm.addPass(scalehls::createAffineLoopUnrollJamPass(
           //     opts.loopUnrollFactor, /*unrollPointLoopOnly=*/true));
-          pm.addPass(mlir::createSimplifyAffineStructuresPass());
+          pm.addNestedPass<func::FuncOp>(mlir::createSimplifyAffineStructuresPass());
           pm.addPass(mlir::createCanonicalizerPass());
         }
 
@@ -433,7 +438,7 @@ void scalehls::registerHIDACppPipeline() {
         pm.addPass(scalehls::createRemoveVariableBoundPass());
         pm.addPass(scalehls::createAffineLoopOrderOptPass());
         // pm.addPass(scalehls::createAffineLoopTilePass(opts.loopTileSize));
-        pm.addPass(mlir::createSimplifyAffineStructuresPass());
+        pm.addNestedPass<func::FuncOp>(mlir::createSimplifyAffineStructuresPass());
         pm.addPass(mlir::createCanonicalizerPass());
 
         if (opts.debugPoint == 7)
@@ -478,7 +483,7 @@ void scalehls::registerHIDACppPipeline() {
           pm.addPass(scalehls::createParallelizeDataflowNodePass(
               opts.loopUnrollFactor, /*unrollPointLoopOnly=*/true,
               opts.complexityAware, opts.correlationAware));
-          pm.addPass(mlir::createSimplifyAffineStructuresPass());
+          pm.addNestedPass<func::FuncOp>(mlir::createSimplifyAffineStructuresPass());
           pm.addPass(mlir::createCanonicalizerPass());
         }
 

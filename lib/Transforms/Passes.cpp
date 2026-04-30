@@ -153,6 +153,14 @@ struct HIDAPyTorchPipelineOptions
       *this, "partition-balance-threshold", llvm::cl::init(0.3),
       llvm::cl::desc("Resource balance threshold for partitioning (0.0-1.0)")};
 
+  Option<bool> partitionEnableCommOpt{
+      *this, "partition-enable-comm-opt", llvm::cl::init(true),
+      llvm::cl::desc("Enable communication optimization in partitioning")};
+
+  Option<double> partitionSingleSlrUtilThreshold{
+      *this, "partition-single-slr-util-threshold", llvm::cl::init(0.8),
+      llvm::cl::desc("Single SLR utilization threshold (0.0-1.0) - designs below this stay in one SLR")};
+
   Option<unsigned> debugPoint{
       *this, "debug-point", llvm::cl::init(0),
       llvm::cl::desc("Stop the pipeline at the given debug point")};
@@ -341,7 +349,8 @@ void scalehls::registerHIDAPyTorchPipeline() {
         if (opts.enableLayoutPartition) {
           pm.addPass(scalehls::createLayoutPartitionPass(
               opts.numTiles, opts.partitionTclOutput,
-              opts.partitionBalanceThreshold, /*enableCommOpt=*/true));
+              opts.partitionBalanceThreshold, opts.partitionEnableCommOpt,
+              opts.partitionSingleSlrUtilThreshold));
           pm.addPass(mlir::createCanonicalizerPass());
         }
       });

@@ -116,7 +116,8 @@ std::unique_ptr<Pass> createQoREstimationPass(std::string qorTargetSpec = "");
 std::unique_ptr<Pass> createLayoutPartitionPass(int numTiles,
                                                 std::string tclOutput,
                                                 double balanceThreshold,
-                                                bool enableCommOpt);
+                                                bool enableCommOpt,
+                                                double singleSlrUtilThreshold = 0.8);
 std::unique_ptr<Pass> createLayoutPartitionPass();
 
 #define GEN_PASS_CLASSES

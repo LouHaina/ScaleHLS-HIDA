@@ -259,8 +259,13 @@ private:
   LogicalResult collectFunctionInfo(ModuleOp module) {
     llvm::errs() << "=== LAYOUT PARTITION: Collecting function information...\n";
     llvm::StringMap<int64_t> funcLatency;
-    for (auto func : module.getOps<func::FuncOp>())
-      if (!func.isDeclaration()) funcLatency[func.getName()] = getTiming(func).getLatency();
+    for (auto func : module.getOps<func::FuncOp>()) {
+      if (func.isDeclaration()) continue;
+      int64_t latency = 0;
+      if (auto timing = getTiming(func))
+        latency = timing.getLatency();
+      funcLatency[func.getName()] = latency;
+    }
     constexpr int64_t interfacePenalty = 1;
 
     for (auto func : module.getOps<func::FuncOp>()) {

@@ -39,6 +39,7 @@
 #include <cmath>
 #include <limits>
 #include <fstream>
+#include <functional>
 #include <deque>
 #include <set>
 #include <map>
@@ -115,6 +116,7 @@ struct FunctionInfo {
   SmallVector<StringRef, 4> callers;
   int partitionId = -1;
   uint64_t communicationWeight = 0; // Total connected bitwidth
+  bool onCriticalPath = false;
   bool skipFloorplan = false; // e.g., tiny helper or top-level.
 };
 
@@ -153,6 +155,7 @@ struct LayoutPartitionPass
     }
 
     identifyTopFunction();
+    markCriticalPathsFromTop();
 
     // Decide whether to partition at all.
     bool keepSingleTile = shouldKeepSingleTile();
@@ -208,6 +211,8 @@ private:
   // Track specific edge weights (Bitwidth) between functions: {A, B} -> bits
   // Key is sorted pair of strings to make it undirected.
   std::map<std::pair<std::string, std::string>, int> edgeWeights;
+  std::map<std::pair<std::string, std::string>, int64_t> directedEdgeWeights;
+  std::set<std::pair<std::string, std::string>> criticalPathEdges;
 
   // Recompute partitionResources from final partitionId assignments.
   void recomputePartitionResources() {
@@ -253,6 +258,10 @@ private:
 
   LogicalResult collectFunctionInfo(ModuleOp module) {
     llvm::errs() << "=== LAYOUT PARTITION: Collecting function information...\n";
+    llvm::StringMap<int64_t> funcLatency;
+    for (auto func : module.getOps<func::FuncOp>())
+      if (!func.isDeclaration()) funcLatency[func.getName()] = getTiming(func).getLatency();
+    constexpr int64_t interfacePenalty = 1;
 
     for (auto func : module.getOps<func::FuncOp>()) {
       if (func.isDeclaration()) continue;
@@ -314,6 +323,9 @@ private:
         std::string b = calleeName.str();
         if (a > b) std::swap(a, b);
         edgeWeights[{a, b}] += callWeight;
+        int64_t calleeLatency = funcLatency.lookup(calleeName);
+        directedEdgeWeights[{funcName.str(), calleeName.str()}] +=
+            calleeLatency + interfacePenalty;
       });
 
       info.callees.append(uniqueCallees.begin(), uniqueCallees.end());
@@ -378,6 +390,70 @@ private:
       auto it = functionInfos.find(topFunctionName);
       if (it != functionInfos.end())
         it->second.skipFloorplan = true;
+    }
+  }
+
+  void markCriticalPathsFromTop() {
+    if (topFunctionName.empty() || !functionInfos.count(topFunctionName)) return;
+    llvm::StringMap<unsigned> nodeToScc;
+    SmallVector<SmallVector<std::string, 4>, 8> sccNodes;
+    SmallVector<std::string, 16> stack;
+    llvm::StringMap<int> disc, low;
+    llvm::StringMap<bool> inStack;
+    int t = 0;
+    std::function<void(StringRef)> tarjan = [&](StringRef u) {
+      disc[u] = low[u] = ++t;
+      stack.push_back(u.str());
+      inStack[u] = true;
+      for (auto v : functionInfos[u].callees) if (functionInfos.count(v)) {
+        if (!disc.count(v)) tarjan(v);
+        if (inStack[v]) low[u] = std::min(low[u], low[v]);
+      }
+      if (low[u] == disc[u]) {
+        sccNodes.emplace_back();
+        while (!stack.empty()) {
+          auto w = stack.pop_back_val();
+          inStack[w] = false;
+          nodeToScc[w] = sccNodes.size() - 1;
+          sccNodes.back().push_back(w);
+          if (w == u.str()) break;
+        }
+      }
+    };
+    for (auto &entry : functionInfos)
+      if (!disc.count(entry.first())) tarjan(entry.first());
+
+    SmallVector<llvm::StringMap<int64_t>, 8> dagAdj(sccNodes.size());
+    for (auto &e : directedEdgeWeights) {
+      unsigned su = nodeToScc[e.first.first], sv = nodeToScc[e.first.second];
+      if (su == sv) continue;
+      auto key = std::to_string(sv);
+      dagAdj[su][key] = std::max(dagAdj[su][key], e.second);
+    }
+    unsigned src = nodeToScc[topFunctionName];
+    SmallVector<int64_t, 16> dist(sccNodes.size(), std::numeric_limits<int64_t>::min());
+    SmallVector<int, 16> pred(sccNodes.size(), -1);
+    dist[src] = 0;
+    for (unsigned u = 0; u < sccNodes.size(); ++u) {
+      if (dist[u] == std::numeric_limits<int64_t>::min()) continue;
+      for (auto &kv : dagAdj[u]) {
+        unsigned v = std::stoi(kv.first().str());
+        if (dist[u] + kv.second > dist[v]) dist[v] = dist[u] + kv.second, pred[v] = u;
+      }
+    }
+    unsigned sink = src;
+    for (unsigned i = 0; i < dist.size(); ++i)
+      if (dist[i] > dist[sink]) sink = i;
+    for (int v = sink; pred[v] != -1; v = pred[v]) {
+      int u = pred[v];
+      for (auto &fn : sccNodes[u]) functionInfos[fn].onCriticalPath = true;
+      for (auto &fn : sccNodes[v]) functionInfos[fn].onCriticalPath = true;
+      for (auto &fromFn : sccNodes[u])
+        for (auto toRef : functionInfos[fromFn].callees) {
+          std::string toFn = toRef.str();
+          if (functionInfos.count(toFn) && nodeToScc[toFn] == (unsigned)v)
+            criticalPathEdges.insert({fromFn, toFn});
+        }
     }
   }
 
@@ -587,6 +663,7 @@ private:
     llvm::errs() << "=== LAYOUT PARTITION: Annotating MLIR functions with partition IDs...\n";
     MLIRContext *ctx = module.getContext();
     auto i32Type = IntegerType::get(ctx, 32);
+    auto i1Type = IntegerType::get(ctx, 1);
 
     for (auto func : module.getOps<func::FuncOp>()) {
       if (func.isDeclaration())
@@ -598,11 +675,22 @@ private:
         continue;
 
       int pid = it->second.partitionId;
+      func->setAttr("onCriticalPath",
+                    IntegerAttr::get(i1Type, it->second.onCriticalPath ? 1 : 0));
       if (pid < 0)
         continue; // top or unassigned
 
       func->setAttr("partition", IntegerAttr::get(i32Type, pid));
       llvm::errs() << "  " << name << " -> partition " << pid << "\n";
+    }
+
+    for (auto func : module.getOps<func::FuncOp>()) {
+      if (func.isDeclaration()) continue;
+      func.walk([&](func::CallOp call) {
+        auto key = std::make_pair(func.getName().str(), call.getCallee().str());
+        bool onCp = criticalPathEdges.count(key);
+        call->setAttr("onCriticalPath", IntegerAttr::get(i1Type, onCp ? 1 : 0));
+      });
     }
   }
 

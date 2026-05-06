@@ -1,0 +1,8 @@
++====================+===================+========================================================================================================================================================+
+| Launch Setup Clock | Launch Hold Clock | Pin                                                                                                                                                    |
++====================+===================+========================================================================================================================================================+
+| ap_clk             | ap_clk            | grp_forward_node133_fu_588/dataflow_in_loop_VITIS_LOOP_3763_1_U0/dataflow_in_loop_VITIS_LOOP_3763_1_Loop_VITIS_LOOP_3612_1_proc66_U0/ap_done_reg_reg/D |
+| ap_clk             | ap_clk            | grp_forward_node68_fu_734/dataflow_in_loop_VITIS_LOOP_1971_1_U0/dataflow_in_loop_VITIS_LOOP_1971_1_Loop_VITIS_LOOP_1828_1_proc126_U0/ap_done_reg_reg/D |
+| ap_clk             | ap_clk            | grp_forward_node90_fu_690/dataflow_in_loop_VITIS_LOOP_2590_1_U0/dataflow_in_loop_VITIS_LOOP_2590_1_Loop_VITIS_LOOP_2439_1_proc104_U0/ap_done_reg_reg/D |
+| ap_clk             | ap_clk            | grp_forward_node149_fu_552/dataflow_in_loop_VITIS_LOOP_4223_1_U0/dataflow_in_loop_VITIS_LOOP_4223_1_Loop_VITIS_LOOP_4070_1_proc50_U0/ap_done_reg_reg/D |
++--------------------+-------------------+--------------------------------------------------------------------------------------------------------------------------------------------------------+

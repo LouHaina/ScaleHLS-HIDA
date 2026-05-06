@@ -1,0 +1,38 @@
++====================+===================+========================================================================================================================================================+
+| Launch Setup Clock | Launch Hold Clock | Pin                                                                                                                                                    |
++====================+===================+========================================================================================================================================================+
+| sys_clk            | sys_clk           | grp_forward_node82_fu_704/dataflow_in_loop_VITIS_LOOP_2390_1_U0/dataflow_in_loop_VITIS_LOOP_2390_1_Loop_VITIS_LOOP_2208_1_proc106_U0/ap_done_reg_reg/D |
+| sys_clk            | sys_clk           | grp_forward_node82_fu_704/dataflow_in_loop_VITIS_LOOP_2390_1_U0/dataflow_in_loop_VITIS_LOOP_2390_1_Loop_VITIS_LOOP_2227_1_proc112_U0/ap_done_reg_reg/D |
+| sys_clk            | sys_clk           | grp_forward_node21_fu_828/dataflow_in_loop_VITIS_LOOP_752_1_U0/dataflow_in_loop_VITIS_LOOP_752_1_Loop_VITIS_LOOP_577_1_proc_U0/ap_done_reg_reg/D       |
+| sys_clk            | sys_clk           | grp_forward_node21_fu_828/dataflow_in_loop_VITIS_LOOP_752_1_U0/dataflow_in_loop_VITIS_LOOP_752_1_Loop_VITIS_LOOP_592_1_proc_U0/ap_done_reg_reg/D       |
+| sys_clk            | sys_clk           | grp_forward_node97_fu_672/dataflow_in_loop_VITIS_LOOP_2835_1_U0/dataflow_in_loop_VITIS_LOOP_2835_1_Loop_VITIS_LOOP_2653_1_proc97_U0/ap_done_reg_reg/D  |
+| sys_clk            | sys_clk           | grp_forward_node97_fu_672/dataflow_in_loop_VITIS_LOOP_2835_1_U0/dataflow_in_loop_VITIS_LOOP_2835_1_Loop_VITIS_LOOP_2634_1_proc90_U0/ap_done_reg_reg/D  |
+| sys_clk            | sys_clk           | grp_forward_node161_fu_488/dataflow_in_loop_VITIS_LOOP_4499_1_U0/dataflow_in_loop_VITIS_LOOP_4499_1_Loop_VITIS_LOOP_4386_1_proc38_U0/ap_done_reg_reg/D |
+| sys_clk            | sys_clk           | grp_forward_node6_fu_864/dataflow_in_loop_VITIS_LOOP_349_1_U0/dataflow_in_loop_VITIS_LOOP_349_1_Loop_VITIS_LOOP_204_1_proc_U0/ap_done_reg_reg/D        |
+| sys_clk            | sys_clk           | grp_forward_node6_fu_864/dataflow_in_loop_VITIS_LOOP_349_1_U0/dataflow_in_loop_VITIS_LOOP_349_1_Loop_VITIS_LOOP_189_1_proc_U0/ap_done_reg_reg/D        |
+| sys_clk            | sys_clk           | grp_forward_node156_fu_532/dataflow_in_loop_VITIS_LOOP_4352_1_U0/dataflow_in_loop_VITIS_LOOP_4352_1_Loop_VITIS_LOOP_4267_1_proc43_U0/ap_done_reg_reg/D |
+| sys_clk            | sys_clk           | grp_forward_node14_fu_848/dataflow_in_loop_VITIS_LOOP_532_1_U0/dataflow_in_loop_VITIS_LOOP_532_1_Loop_VITIS_LOOP_399_1_proc_U0/ap_done_reg_reg/D       |
+| sys_clk            | sys_clk           | grp_forward_node161_fu_488/loop_dataflow_output_count_reg[0]/R                                                                                         |
+| sys_clk            | sys_clk           | grp_forward_node133_fu_588/dataflow_in_loop_VITIS_LOOP_3763_1_U0/dataflow_in_loop_VITIS_LOOP_3763_1_Loop_VITIS_LOOP_3612_1_proc66_U0/ap_done_reg_reg/D |
+| sys_clk            | sys_clk           | grp_forward_node140_fu_568/dataflow_in_loop_VITIS_LOOP_4016_1_U0/dataflow_in_loop_VITIS_LOOP_4016_1_Loop_VITIS_LOOP_3826_1_proc59_U0/ap_done_reg_reg/D |
+| sys_clk            | sys_clk           | grp_forward_node149_fu_552/dataflow_in_loop_VITIS_LOOP_4223_1_U0/dataflow_in_loop_VITIS_LOOP_4223_1_Loop_VITIS_LOOP_4070_1_proc50_U0/ap_done_reg_reg/D |
+| sys_clk            | sys_clk           | grp_forward_node140_fu_568/dataflow_in_loop_VITIS_LOOP_4016_1_U0/dataflow_in_loop_VITIS_LOOP_4016_1_Loop_VITIS_LOOP_3807_1_proc52_U0/ap_done_reg_reg/D |
+| sys_clk            | sys_clk           | grp_forward_node44_fu_780/dataflow_in_loop_VITIS_LOOP_1335_1_U0/dataflow_in_loop_VITIS_LOOP_1335_1_Loop_VITIS_LOOP_1174_1_proc150_U0/ap_done_reg_reg/D |
+| sys_clk            | sys_clk           | grp_forward_node44_fu_780/dataflow_in_loop_VITIS_LOOP_1335_1_U0/dataflow_in_loop_VITIS_LOOP_1335_1_Loop_VITIS_LOOP_1155_1_proc144_U0/ap_done_reg_reg/D |
+| sys_clk            | sys_clk           | grp_forward_node52_fu_766/dataflow_in_loop_VITIS_LOOP_1533_1_U0/dataflow_in_loop_VITIS_LOOP_1533_1_Loop_VITIS_LOOP_1384_1_proc142_U0/ap_done_reg_reg/D |
+| sys_clk            | sys_clk           | grp_forward_node90_fu_690/dataflow_in_loop_VITIS_LOOP_2590_1_U0/dataflow_in_loop_VITIS_LOOP_2590_1_Loop_VITIS_LOOP_2439_1_proc104_U0/ap_done_reg_reg/D |
+| sys_clk            | sys_clk           | grp_forward_node37_fu_796/dataflow_in_loop_VITIS_LOOP_1110_1_U0/dataflow_in_loop_VITIS_LOOP_1110_1_Loop_VITIS_LOOP_977_1_proc_U0/ap_done_reg_reg/D     |
+| sys_clk            | sys_clk           | grp_forward_node3_fu_882/dataflow_in_loop_VITIS_LOOP_167_1_U0/dataflow_in_loop_VITIS_LOOP_167_1_Loop_VITIS_LOOP_123_1_proc_U0/ap_done_reg_reg/D        |
+| sys_clk            | sys_clk           | grp_forward_node166_fu_448/dataflow_in_loop_VITIS_LOOP_4683_1_U0/dataflow_in_loop_VITIS_LOOP_4683_1_Loop_VITIS_LOOP_4535_1_proc32_U0/ap_done_reg_reg/D |
+| sys_clk            | sys_clk           | grp_forward_node30_fu_812/dataflow_in_loop_VITIS_LOOP_932_1_U0/dataflow_in_loop_VITIS_LOOP_932_1_Loop_VITIS_LOOP_805_1_proc_U0/ap_done_reg_reg/D       |
+| sys_clk            | sys_clk           | grp_forward_node59_fu_748/dataflow_in_loop_VITIS_LOOP_1776_1_U0/dataflow_in_loop_VITIS_LOOP_1776_1_Loop_VITIS_LOOP_1577_1_proc128_U0/ap_done_reg_reg/D |
+| sys_clk            | sys_clk           | grp_forward_node59_fu_748/dataflow_in_loop_VITIS_LOOP_1776_1_U0/dataflow_in_loop_VITIS_LOOP_1776_1_Loop_VITIS_LOOP_1596_1_proc135_U0/ap_done_reg_reg/D |
+| sys_clk            | sys_clk           | grp_forward_node75_fu_720/dataflow_in_loop_VITIS_LOOP_2164_1_U0/dataflow_in_loop_VITIS_LOOP_2164_1_Loop_VITIS_LOOP_2015_1_proc119_U0/ap_done_reg_reg/D |
+| sys_clk            | sys_clk           | grp_forward_node68_fu_734/dataflow_in_loop_VITIS_LOOP_1971_1_U0/dataflow_in_loop_VITIS_LOOP_1971_1_Loop_VITIS_LOOP_1828_1_proc126_U0/ap_done_reg_reg/D |
+| sys_clk            | sys_clk           | grp_forward_node125_fu_602/dataflow_in_loop_VITIS_LOOP_3562_1_U0/dataflow_in_loop_VITIS_LOOP_3562_1_Loop_VITIS_LOOP_3399_1_proc74_U0/ap_done_reg_reg/D |
+| sys_clk            | sys_clk           | grp_forward_node125_fu_602/dataflow_in_loop_VITIS_LOOP_3562_1_U0/dataflow_in_loop_VITIS_LOOP_3562_1_Loop_VITIS_LOOP_3374_1_proc68_U0/ap_done_reg_reg/D |
+| sys_clk            | sys_clk           | grp_forward_node113_fu_624/dataflow_in_loop_VITIS_LOOP_3349_1_U0/forward_node114_U0/ap_done_reg_reg/D                                                  |
+| sys_clk            | sys_clk           | grp_forward_node106_fu_658/dataflow_in_loop_VITIS_LOOP_3032_1_U0/dataflow_in_loop_VITIS_LOOP_3032_1_Loop_VITIS_LOOP_2887_1_proc88_U0/ap_done_reg_reg/D |
+| sys_clk            | sys_clk           | ap_CS_fsm_reg[2]/D                                                                                                                                     |
+| sys_clk            | sys_clk           | ap_CS_fsm_reg[1]/D                                                                                                                                     |
++--------------------+-------------------+--------------------------------------------------------------------------------------------------------------------------------------------------------+

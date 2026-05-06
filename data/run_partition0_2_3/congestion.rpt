@@ -1,0 +1,98 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2023 Advanced Micro Devices, Inc. All Rights Reserved.
+---------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2023.2 (win64) Build 4029153 Fri Oct 13 20:14:34 MDT 2023
+| Date         : Mon Dec  8 04:42:54 2025
+| Host         : DESKTOP-1ORS7G9 running 64-bit major release  (build 9200)
+| Command      : report_design_analysis -congestion -file congestion.rpt
+| Design       : forward
+| Device       : xcvu37p
+| Design State : Routed
+---------------------------------------------------------------------------------------------------------------------------------------------
+
+Report Design Analysis
+
+Table of Contents
+-----------------
+1. Placer Final Level Congestion Reporting
+2. Router Initial Congestion
+3. SLR Net Crossing Reporting
+
+1. Placer Final Level Congestion Reporting
+------------------------------------------
+
++-----------+------+-------+--------+---------------+---------------+-----+--------+------+------+------+------+-----+-------+-----+------------+
+| Direction | Type | Level | Window | Combined LUTs | Avg LUT Input | LUT | LUTRAM | Flop | MUXF | RAMB | URAM | DSP | CARRY | SRL | Cell Names |
++-----------+------+-------+--------+---------------+---------------+-----+--------+------+------+------+------+-----+-------+-----+------------+
+* No congestion windows are found above level 5
+
+
+2. Router Initial Congestion
+----------------------------
+
++-----------+------+-------+--------+---------------+---------------+-----+--------+------+------+------+------+-----+-------+-----+------------+-------------+
+| Direction | Type | Level | Window | Combined LUTs | Avg LUT Input | LUT | LUTRAM | Flop | MUXF | RAMB | URAM | DSP | CARRY | SRL | Cell Names | Sub Windows |
++-----------+------+-------+--------+---------------+---------------+-----+--------+------+------+------+------+-----+-------+-----+------------+-------------+
+* No effective congestion windows are found above level 5
+
+
+3. SLR Net Crossing Reporting
+-----------------------------
+
++-----------------------------------------------------+-----------------------------+-------------+-------------+-------------+
+|                      Cell Names                     | Number of Nets crossing SLR | 0 - 1 Cuts  | 0 - 2 Cuts  | 1 - 2 Cuts  |
++-----------------------------------------------------+-----------------------------+-------------+-------------+-------------+
+| ap_CS_fsm_reg[0]                                    | 2                           | 0           | 0           | 2           |
+| ap_CS_fsm_reg[1]                                    | 1                           | 0           | 0           | 1           |
+| ap_CS_fsm_reg[3]                                    | 1                           | 0           | 0           | 1           |
+| ap_sync_reg_grp_forward_node106_fu_658_ap_done_reg  | 1                           | 0           | 0           | 1           |
+| ap_sync_reg_grp_forward_node113_fu_624_ap_done_reg  | 1                           | 0           | 0           | 1           |
+| ap_sync_reg_grp_forward_node125_fu_602_ap_done_reg  | 1                           | 0           | 0           | 1           |
+| ap_sync_reg_grp_forward_node125_fu_602_ap_ready_reg | 1                           | 0           | 0           | 1           |
+| ap_sync_reg_grp_forward_node133_fu_588_ap_done_reg  | 1                           | 0           | 0           | 1           |
+| ap_sync_reg_grp_forward_node140_fu_568_ap_done_reg  | 2                           | 0           | 0           | 2           |
+| ap_sync_reg_grp_forward_node140_fu_568_ap_ready_reg | 2                           | 0           | 0           | 2           |
+| ap_sync_reg_grp_forward_node149_fu_552_ap_done_reg  | 2                           | 0           | 0           | 2           |
+| ap_sync_reg_grp_forward_node149_fu_552_ap_ready_reg | 2                           | 0           | 0           | 2           |
+| ap_sync_reg_grp_forward_node14_fu_848_ap_ready_reg  | 2                           | 0           | 0           | 2           |
+| ap_sync_reg_grp_forward_node156_fu_532_ap_ready_reg | 2                           | 0           | 0           | 2           |
+| ap_sync_reg_grp_forward_node161_fu_488_ap_done_reg  | 2                           | 0           | 0           | 2           |
+| ap_sync_reg_grp_forward_node161_fu_488_ap_ready_reg | 2                           | 0           | 0           | 2           |
+| ap_sync_reg_grp_forward_node166_fu_448_ap_done_reg  | 2                           | 0           | 0           | 2           |
+| ap_sync_reg_grp_forward_node166_fu_448_ap_ready_reg | 2                           | 0           | 0           | 2           |
+| ap_sync_reg_grp_forward_node21_fu_828_ap_ready_reg  | 2                           | 0           | 0           | 2           |
+| ap_sync_reg_grp_forward_node30_fu_812_ap_ready_reg  | 2                           | 0           | 0           | 2           |
+| ap_sync_reg_grp_forward_node37_fu_796_ap_done_reg   | 2                           | 0           | 0           | 2           |
+| ap_sync_reg_grp_forward_node37_fu_796_ap_ready_reg  | 2                           | 0           | 0           | 2           |
+| ap_sync_reg_grp_forward_node3_fu_882_ap_done_reg    | 2                           | 0           | 0           | 2           |
+| ap_sync_reg_grp_forward_node3_fu_882_ap_ready_reg   | 2                           | 0           | 0           | 2           |
+| ap_sync_reg_grp_forward_node59_fu_748_ap_done_reg   | 2                           | 0           | 0           | 2           |
+| ap_sync_reg_grp_forward_node68_fu_734_ap_done_reg   | 2                           | 0           | 0           | 2           |
+| ap_sync_reg_grp_forward_node6_fu_864_ap_ready_reg   | 2                           | 0           | 0           | 2           |
+| ap_sync_reg_grp_forward_node82_fu_704_ap_ready_reg  | 2                           | 0           | 0           | 2           |
+| ap_sync_reg_grp_forward_node90_fu_690_ap_done_reg   | 1                           | 0           | 0           | 1           |
+| ap_sync_reg_grp_forward_node90_fu_690_ap_ready_reg  | 2                           | 0           | 0           | 2           |
+| ap_sync_reg_grp_forward_node97_fu_672_ap_ready_reg  | 2                           | 0           | 0           | 2           |
+| grp_forward_node0_fu_894                            | 26                          | 0           | 0           | 26          |
+| grp_forward_node106_fu_658                          | 13                          | 0           | 0           | 13          |
+| grp_forward_node113_fu_624                          | 1                           | 0           | 0           | 1           |
+| grp_forward_node125_fu_602                          | 2                           | 0           | 0           | 2           |
+| grp_forward_node133_fu_588                          | 20                          | 0           | 0           | 20          |
+| grp_forward_node140_fu_568                          | 1                           | 0           | 0           | 1           |
+| grp_forward_node156_fu_532                          | 1                           | 0           | 0           | 1           |
+| grp_forward_node161_fu_488                          | 1                           | 0           | 0           | 1           |
+| grp_forward_node166_fu_448                          | 2                           | 0           | 0           | 2           |
+| grp_forward_node37_fu_796                           | 1                           | 0           | 0           | 1           |
+| grp_forward_node3_fu_882                            | 5                           | 0           | 0           | 5           |
+| grp_forward_node44_fu_780                           | 1                           | 0           | 0           | 1           |
+| grp_forward_node52_fu_766                           | 1                           | 0           | 0           | 1           |
+| grp_forward_node59_fu_748                           | 1                           | 0           | 0           | 1           |
+| grp_forward_node6_fu_864                            | 3                           | 0           | 0           | 3           |
+| grp_forward_node75_fu_720                           | 4                           | 0           | 0           | 4           |
+| grp_forward_node82_fu_704                           | 1                           | 0           | 0           | 1           |
+| grp_forward_node90_fu_690                           | 20                          | 0           | 0           | 20          |
+| grp_forward_node97_fu_672                           | 1                           | 0           | 0           | 1           |
+| v2706_1_U                                           | 19                          | 0           | 0           | 19          |
+| v2706_U                                             | 11                          | 0           | 0           | 11          |
++-----------------------------------------------------+-----------------------------+-------------+-------------+-------------+
+
+

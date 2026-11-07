@@ -1,0 +1,11 @@
+{
+  "name": "Alveo U280 (xcu280 / xcvu37p)",
+  "part": "xcu280-fsvh2892-2L-e",
+  "slrs": 3,
+  "sll_per_boundary": 23040,
+  "note": "per-SLR capacities are approximate device totals divided by 3; replace with usable area after removing the shell (report_utilization -slr on an empty design gives the exact numbers)",
+  "capacity_per_slr": {"lut": 434560, "ff": 869120, "dsp": 3008, "bram": 1344, "uram": 320},
+  "pblock_ranges": {"0": "SLR0", "1": "SLR1", "2": "SLR2"},
+  "memory_anchors": {"axi": 0, "port": null},
+  "memory_note": "HBM is attached at the bottom of SLR0; DDR4 controllers sit in SLR0/SLR1. 'axi' edges are anchored to SLR0 by default."
+}

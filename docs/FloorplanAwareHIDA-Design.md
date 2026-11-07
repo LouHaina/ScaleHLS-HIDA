@@ -227,6 +227,18 @@ Expected outcome: B0 fails or drops sharply in Fmax once the design spans SLRs; 
 - Nodes larger than an SLR. Mitigation: unit splitting along buffer edges; otherwise reduce the node's unroll factor through the existing HIDA options and report it.
 - Control-path crossings (`ap_sync`, `loop_dataflow_output_count`) that only the RTL tier can register. Mitigation: measure how much the C++ tier leaves on the table; implement the RTL tier if it is more than about 10 percent of Fmax.
 
+## 14. Implementation status and workload notes
+
+Implemented on branch `claude/fpga-floorplan-impl` (see `tools/floorplan/README.md`):
+
+- `scalehls-export-dataflow-graph` and `scalehls-apply-floorplan` passes (components B and D), pipeline options `floorplan-graph-output` and `floorplan-assignment`, `#pragma HLS inline off` and `#pragma HLS stream depth` emission.
+- `tools/floorplan/floorplan.py` with `solve` (CP-SAT ILP of Section 6.2, including anchors, grouping, cycle budget, locks and penalties), `emit` (pblock or soft constraints plus manifest), `calibrate` (csynth instance table) and `loop` (the outer iteration of Section 8), plus `parse_reports.py`, `run_vivado_iter.tcl`, `hls_csynth.tcl` and device files for U280 and U250.
+- Not implemented yet: buffer-to-stream conversion of cut on-chip buffer edges (the solver keeps such pairs grouped instead), latency balancing of reconvergent paths, and the RTL relay-station tier.
+
+HIDA's estimator reports LUT = 0 for every function and over-estimates BRAM, so the ILP balances on DSP until the first csynth calibration replaces the areas. Calibration is therefore the first step of every real run, not an optimization.
+
+Transformer (LLM) workloads: a complete LLM is not a suitable benchmark because weights do not fit on chip and the PyTorch front-end requires static shapes, but a single encoder or decoder layer with a fixed sequence length (for example BERT-base dimensions at sequence length 128) is a good secondary workload. Its attention and feed-forward matmuls form 10 to 15 large units that unroll well and fill SLRs evenly, which exercises resource balancing more than CNNs do, and it allows a direct comparison with StreamTensor's ILP die assignment. Softmax and layer normalization need `exp`, `div` and `sqrt` operators that the estimator models only through the latency table in `config.json`, so the calibration step matters even more there. Keep the CNN benchmarks as the primary set, since that is where HIDA's own results are established.
+
 ## 13. References
 
 - AutoBridge, FPGA 2021: https://dl.acm.org/doi/10.1145/3431920.3439289 ; code https://github.com/Licheng-Guo/AutoBridge (ILP in `src/autobridge/Floorplan/`, SLL constraints in `ILPUtilities.py`, latency balancing in `Route/latency_balancing.py`, 2 stages per boundary in `Opt/GlobalRouting.py`)

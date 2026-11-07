@@ -157,6 +157,16 @@ struct HIDAPyTorchPipelineOptions
       *this, "partition-enable-comm-opt", llvm::cl::init(true),
       llvm::cl::desc("Enable communication optimization in partitioning")};
 
+  Option<std::string> floorplanGraphOutput{
+      *this, "floorplan-graph-output", llvm::cl::init(""),
+      llvm::cl::desc("Export the dataflow graph JSON for the SLR floorplanner "
+                     "(empty to disable)")};
+
+  Option<std::string> floorplanAssignment{
+      *this, "floorplan-assignment", llvm::cl::init(""),
+      llvm::cl::desc("Apply the SLR assignment JSON produced by "
+                     "tools/floorplan/floorplan.py (empty to disable)")};
+
   Option<double> partitionSingleSlrUtilThreshold{
       *this, "partition-single-slr-util-threshold", llvm::cl::init(0.8),
       llvm::cl::desc("Single SLR utilization threshold (0.0-1.0) - designs below this stay in one SLR")};
@@ -344,6 +354,15 @@ void scalehls::registerHIDAPyTorchPipeline() {
 
         if (opts.debugPoint == 15)
           return;
+
+        // Floorplan-aware flow: export the graph, optionally apply a solved
+        // assignment (both run on the second compile of an iteration).
+        if (!opts.floorplanGraphOutput.empty())
+          pm.addPass(scalehls::createExportDataflowGraphPass(
+              opts.floorplanGraphOutput, opts.hlsTopFunc));
+        if (!opts.floorplanAssignment.empty())
+          pm.addPass(
+              scalehls::createApplyFloorplanPass(opts.floorplanAssignment));
 
         // Layout-driven partitioning optimization.
         if (opts.enableLayoutPartition) {

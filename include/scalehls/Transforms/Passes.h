@@ -120,6 +120,13 @@ std::unique_ptr<Pass> createLayoutPartitionPass(int numTiles,
                                                 double singleSlrUtilThreshold = 0.8);
 std::unique_ptr<Pass> createLayoutPartitionPass();
 
+/// Floorplan-related passes.
+std::unique_ptr<Pass>
+createExportDataflowGraphPass(std::string output = "graph.json",
+                              std::string topFunc = "forward");
+std::unique_ptr<Pass>
+createApplyFloorplanPass(std::string assignment = "assignment.json");
+
 #define GEN_PASS_CLASSES
 #include "scalehls/Transforms/Passes.h.inc"
 

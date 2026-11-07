@@ -75,3 +75,48 @@ Three ways to share the directory, from simplest to most automated:
 Vitis HLS only needs to run again when the C++ changes (granularity or stream
 depth changes). Pure re-assignment iterations reuse the same post-synthesis
 checkpoint and only re-run `run_vivado_iter.tcl`.
+
+## Compiler-integrated flow (new passes)
+
+Two passes implement components B and D of the design:
+
+- `scalehls-export-dataflow-graph="output=graph.json top-func=forward"` runs
+  after QoR estimation, recovers producer/consumer edges from calls that share
+  a buffer or stream, marks the callees of the top function as units
+  (`floorplan_unit`, `inline_off`, emitted as `#pragma HLS inline off`), tags
+  every channel op with a stable `floorplan_id`, and writes `graph.json`.
+- `scalehls-apply-floorplan="assignment=assignment.json"` sets `slr` on
+  functions and `fifo_depth` on cut stream channels (emitted as
+  `#pragma HLS stream depth=N`).
+
+Both are reachable from the PyTorch pipeline:
+
+```
+scalehls-opt resnet18.mlir -hida-pytorch-pipeline="top-func=forward ... \
+    floorplan-graph-output=graph.json floorplan-assignment=assignment.json"
+```
+
+Driver (`floorplan.py`):
+
+```
+floorplan.py solve graph.json --device devices/u280.json --out assignment.json \
+    [--calibration calibration.json] [--feedback feedback.json --prev prev_assignment.json]
+floorplan.py emit assignment.json --device devices/u280.json --out-tcl floorplan.tcl --out-manifest manifest.json [--soft]
+floorplan.py calibrate graph.json --hls-dir <dir with forward_csynth.rpt> --out calibration.json
+floorplan.py loop loop_config.example.json
+```
+
+`solve` collapses leaves into units, anchors AXI units to the memory SLR from
+the device file, keeps on-chip buffer pairs grouped (`--allow-buffer-cut` to
+relax), adds a throughput budget on dependency cycles, and, from the second
+iteration on, locks units not implicated in failing paths and penalizes edges
+whose unit pair failed timing. `emit` writes pblock (or `USER_SLR_ASSIGNMENT`)
+constraints with regex cell matching per unit, a verification warning for
+units that match no cells, and best-effort pinning of cut-stream FIFOs next to
+their consumer. `calibrate` replaces estimator areas with the instance table
+of the Vitis HLS csynth report (HIDA's estimator reports LUT = 0 and
+over-estimates BRAM, so this step matters).
+
+Status: `solve` and `emit` are tested on the ResNet18 graph (see above).
+`calibrate`, `loop`, `hls_csynth.tcl` and `run_vivado_iter.tcl` need Vitis HLS
+and Vivado and are untested here.

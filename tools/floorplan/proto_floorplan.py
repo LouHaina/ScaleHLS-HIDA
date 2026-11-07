@@ -223,6 +223,7 @@ def main():
     ap.add_argument('--baseline-tcl'); ap.add_argument('--balance', type=float, default=0.3,
                     help='each SLR may hold at most (1+balance)/K of every resource')
     ap.add_argument('--sll-cap', type=int, default=23040 // 2); ap.add_argument('--json')
+    ap.add_argument('--export-graph', help='write the graph in the schema of scalehls-export-dataflow-graph')
     a = ap.parse_args()
     funcs = parse_cpp(a.cpp)
     units, leaves, parent, edges, areas = build_graph(funcs, a.top)
@@ -270,6 +271,18 @@ def main():
         for k, v in r.items(): print(f'  {k}: {v}')
     if a.json:
         json.dump(dict(units=units, leaves=leaves, edges=edges, areas=areas, results=results), open(a.json, 'w'), indent=1)
+    if a.export_graph:
+        nodes = []
+        for u in units:
+            nodes.append(dict(name=u, parent='', is_unit=True, inline=False, dataflow=True, latency=0, interval=0,
+                              callees=leaves[u] if leaves[u] != [u] else [], **{r: areas[u][r] for r in ('lut', 'ff', 'dsp', 'bram', 'uram')}))
+            for l in leaves[u]:
+                if l == u: continue
+                nodes.append(dict(name=l, parent=u, is_unit=False, inline=funcs[l]['inline'], dataflow=False, latency=0, interval=0,
+                                  callees=[], lut=0, ff=0, dsp=0, bram=0, uram=0))  # unit areas already include leaves
+        gedges = [dict(src=x, dst=y, kind=k, width=w, depth=1, scope=parent.get(x, a.top), channel=f'{parent.get(x, a.top)}:{i}' if k == 'token' else '')
+                  for i, (x, y, w, k) in enumerate(edges)]
+        json.dump(dict(top=a.top, resource_note='proxy areas from C++', nodes=nodes, edges=gedges), open(a.export_graph, 'w'), indent=1)
 
 if __name__ == '__main__':
     main()

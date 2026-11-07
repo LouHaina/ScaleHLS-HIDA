@@ -708,6 +708,12 @@ void ModuleEmitter::emitStreamChannel(StreamOp op) {
   emitValue(op.getChannel());
   os << ";";
   emitInfoAndNewLine(op);
+  // Depth requested by the floorplanner for SLR-crossing channels.
+  if (auto depth = op->getAttrOfType<IntegerAttr>("fifo_depth")) {
+    indent() << "#pragma HLS stream variable=";
+    emitValue(op.getChannel());
+    os << " depth=" << depth.getInt() << "\n";
+  }
 }
 
 void ModuleEmitter::emitStreamRead(StreamReadOp op) {
@@ -1897,7 +1903,9 @@ void ModuleEmitter::emitFunctionDirectives(func::FuncOp func,
     }
   }
 
-  if (func->getAttr("inline"))
+  if (func->getAttr("inline_off"))
+    indent() << "#pragma HLS inline off\n";
+  else if (func->getAttr("inline"))
     indent() << "#pragma HLS inline\n";
 
   if (auto funcDirect = getFuncDirective(func)) {

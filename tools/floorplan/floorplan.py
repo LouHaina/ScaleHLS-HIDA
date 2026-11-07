@@ -94,9 +94,8 @@ def cmd_solve(a):
             if tot: cap[r] = min(cap[r], tot * (1 + a.balance) / K)
     anchors = {}
     axi_slr = dev.get('memory_anchors', {}).get('axi')
-    if axi_slr is not None:
-        for e in edges:
-            if e['kind'] == 'axi': anchors.setdefault(e['src'], axi_slr)
+    if axi_slr is not None and '__mem__' in units:
+        anchors['__mem__'] = axi_slr   # memory subsystem pseudo-node; AXI edges pull units toward it
     groups = [(e['src'], e['dst']) for e in edges if e['kind'] == 'buffer' and not a.allow_buffer_cut]
     penalties, locks = {}, {}
     if a.feedback:
@@ -126,11 +125,13 @@ def cmd_solve(a):
     cut = []
     for i, e in enumerate(edges):
         dd = abs(assign[e['src']] - assign[e['dst']])
-        if dd == 0: continue
+        if dd == 0 or e['src'].startswith('__') or e['dst'].startswith('__'): continue
         cut.append(dict(e, distance=dd))
         if e['kind'] in ('token', 'stream') and e.get('channel'):
             channels[e['channel']] = {'depth': max(int(e.get('depth', 1)), 2) + 2 * dd + a.slack}
-    out = dict(device=dev['name'], slrs=K, assignment=full, units=units, channels=channels,
+    real_units = [u for u in units if not u.startswith('__')]
+    full = {n: k for n, k in full.items() if not n.startswith('__')}
+    out = dict(device=dev['name'], slrs=K, assignment=full, units=real_units, channels=channels,
                cut_edges=cut, score=ilp.score(assign, edges, areas, K), solver=dict(status=info['status'], seconds=round(info['seconds'], 2)),
                areas=areas)
     json.dump(out, open(a.out, 'w'), indent=1)

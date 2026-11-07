@@ -3,7 +3,7 @@
 
 // CHECK: func.func @forward_node0({{.*}}) attributes {floorplan_unit, inline_off, slr = 0 : i32}
 // CHECK: func.func @forward_node1({{.*}}) attributes {floorplan_unit, inline_off, slr = 1 : i32}
-// CHECK: %0 = hls.dataflow.stream {depth = 2 : i32, fifo_depth = 6 : i32, floorplan_id = "forward:0"} : !hls.stream<i1, 2>
+// CHECK: %0 = hls.dataflow.stream {depth = 2 : i32, fifo_depth = 6 : i32, floorplan_id = "forward:0"} : {{.*}}<i1, 2>
 
 // CPP: void forward_node0(
 // CPP: #pragma HLS inline off

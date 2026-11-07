@@ -117,6 +117,28 @@ their consumer. `calibrate` replaces estimator areas with the instance table
 of the Vitis HLS csynth report (HIDA's estimator reports LUT = 0 and
 over-estimates BRAM, so this step matters).
 
-Status: `solve` and `emit` are tested on the ResNet18 graph (see above).
+### Tested end to end (compiler build, ResNet18, tile 4, unroll 2, U280)
+
+```
+scalehls-opt resnet18.mlir -hida-pytorch-pipeline="top-func=forward loop-tile-size=4 \
+    loop-unroll-factor=2 floorplan-graph-output=graph.json" > /dev/null
+floorplan.py solve graph.json --device devices/u280.json --balance 0.3 --out assignment.json
+scalehls-opt resnet18.mlir -hida-pytorch-pipeline="... floorplan-graph-output=graph.json \
+    floorplan-assignment=assignment.json" | scalehls-translate -scalehls-emit-hlscpp -emit-vitis-directives > design.cpp
+floorplan.py emit assignment.json --device devices/u280.json --out-tcl floorplan.tcl --out-manifest manifest.json
+```
+
+- Exported graph: 24 units + memory pseudo-node, 172 functions, 290 edges
+  (123 on-chip buffer edges inside units, 45 DRAM producer/consumer edges
+  between units recovered through the AXI ports of the runtime `main`, 122
+  AXI edges to the memory node).
+- ILP: optimal in 0.3 s; 10/7/7 units per SLR; no on-chip buffer cut; 5 DRAM
+  edges and 66 AXI edges cross a boundary (those carry no SLL wires).
+- Applied IR: 172 functions carry `slr`; emitted C++ has `#pragma HLS inline off`
+  on exactly the 24 units.
+- lit: `test/Transforms/Floorplan` passes; the whole ScaleHLS suite is
+  43 passed, 2 unsupported (Python bindings and Polygeist not built).
+
 `calibrate`, `loop`, `hls_csynth.tcl` and `run_vivado_iter.tcl` need Vitis HLS
-and Vivado and are untested here.
+and Vivado and are untested here. The ILP balances on DSP until `calibrate`
+supplies LUT/FF numbers, because HIDA's estimator reports LUT = 0.

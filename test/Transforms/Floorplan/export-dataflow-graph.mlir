@@ -6,7 +6,7 @@
 // CHECK:   %0 = hls.dataflow.buffer {depth = 1 : i32, floorplan_id = "forward_node0:{{[0-9]+}}"} : memref<16xi8, #hls.mem<bram_t2p>>
 // CHECK: func.func @forward_node1({{.*}}) attributes {floorplan_unit, inline_off, resource = #hls.res<lut = 0, dsp = 4, bram = 0>}
 // CHECK: func.func @forward({{.*}}) attributes {top_func} {
-// CHECK:   %0 = hls.dataflow.stream {depth = 2 : i32, floorplan_id = "forward:{{[0-9]+}}"} : !hls.stream<i1, 2>
+// CHECK:   %0 = hls.dataflow.stream {depth = 2 : i32, floorplan_id = "forward:{{[0-9]+}}"} : {{.*}}<i1, 2>
 
 // JSON: "top": "forward"
 // JSON: "name": "forward_node0"

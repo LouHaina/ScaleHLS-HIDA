@@ -79,6 +79,41 @@ struct ExportDataflowGraph
   llvm::MapVector<StringRef, NodeRecord> nodes;
   SmallVector<EdgeRecord> edges;
   unsigned channelCounter = 0;
+  /// AXI port element (memref in the top) -> runtime buffer it is packed from.
+  DenseMap<Value, Value> portToRuntimeBuffer;
+  /// Runtime buffer -> ordinal used as channel id.
+  DenseMap<Value, unsigned> runtimeBufferIds;
+  static constexpr const char *memNode = "__mem__";
+
+  /// Two calls in the top that read/write the same DRAM buffer through
+  /// different AXI ports are still producer/consumer: map each port back to
+  /// the runtime buffer packed into it by the runtime "main" function.
+  void resolveAxiPorts(ModuleOp module, func::FuncOp top) {
+    func::CallOp topCall;
+    for (auto func : module.getOps<func::FuncOp>()) {
+      if (!hasRuntimeAttr(func))
+        continue;
+      func.walk([&](func::CallOp call) {
+        if (call.getCallee() == top.getName())
+          topCall = call;
+      });
+    }
+    if (!topCall)
+      return;
+    top.walk([&](AxiPortOp port) {
+      auto arg = port.getAxi().dyn_cast<BlockArgument>();
+      if (!arg || arg.getOwner()->getParentOp() != top)
+        return;
+      if (arg.getArgNumber() >= topCall.getNumOperands())
+        return;
+      auto pack = topCall.getOperand(arg.getArgNumber()).getDefiningOp<AxiPackOp>();
+      if (!pack)
+        return;
+      auto buffer = traceBuffer(pack.getElement());
+      portToRuntimeBuffer[port.getElement()] = buffer;
+      runtimeBufferIds.try_emplace(buffer, runtimeBufferIds.size());
+    });
+  }
 
   /// Give a buffer/stream op a stable id attribute (function:ordinal).
   std::string getOrCreateChannelId(Value v, func::FuncOp scope) {
@@ -132,16 +167,41 @@ struct ExportDataflowGraph
     SmallVector<func::CallOp> calls;
     func.walk([&](func::CallOp call) { calls.push_back(call); });
     llvm::MapVector<Value, SmallVector<func::CallOp>> users;
+    llvm::MapVector<Value, Value> keyToExample;
     for (auto call : calls)
-      for (auto operand : call.getOperands())
-        users[operand].push_back(call);
-    for (auto &[value, callList] : users) {
+      for (auto operand : call.getOperands()) {
+        Value key = operand;
+        if (isTop) {
+          auto it = portToRuntimeBuffer.find(traceBuffer(operand));
+          if (it != portToRuntimeBuffer.end())
+            key = it->second;
+          // Every AXI port is a wire to the memory subsystem: edge to __mem__.
+          if (traceBuffer(operand).getDefiningOp<AxiPortOp>()) {
+            EdgeRecord mem;
+            mem.scope = func.getName().str();
+            mem.src = call.getCallee().str();
+            mem.dst = memNode;
+            mem.kind = "axi";
+            auto memrefType = operand.getType().dyn_cast<MemRefType>();
+            mem.width = (memrefType ? getElementBits(memrefType) : 32) + 64;
+            edges.push_back(mem);
+          }
+        }
+        keyToExample.insert({key, operand});
+        users[key].push_back(call);
+      }
+    for (auto &[key, callList] : users) {
       if (callList.size() < 2)
         continue;
       EdgeRecord proto;
       proto.scope = func.getName().str();
+      Value value = keyToExample.lookup(key);
       if (!classify(value, func, isTop, proto))
         continue;
+      if (key != value) { // shared runtime DRAM buffer behind AXI ports
+        proto.kind = "dram";
+        proto.channelId = "mem:" + std::to_string(runtimeBufferIds.lookup(key));
+      }
       auto producer = callList.front();
       llvm::StringSet<> seen;
       for (auto consumer : llvm::drop_begin(callList)) {
@@ -189,6 +249,8 @@ struct ExportDataflowGraph
     }
     auto context = module.getContext();
 
+    resolveAxiPorts(module, top);
+
     // Units: callees of the top function in program order.
     llvm::SetVector<StringRef> unitNames;
     top.walk([&](func::CallOp call) { unitNames.insert(call.getCallee()); });
@@ -221,6 +283,11 @@ struct ExportDataflowGraph
       }
     }
     collectEdges(top, /*isTop=*/true);
+    if (llvm::any_of(edges, [](const EdgeRecord &e) { return e.dst == memNode; })) {
+      auto &mem = nodes[memNode];
+      mem.name = memNode;
+      mem.isUnit = true;
+    }
 
     std::error_code ec;
     llvm::raw_fd_ostream os(output, ec);

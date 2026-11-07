@@ -25,7 +25,7 @@
 // JSON: "kind": "token"
 // JSON: "src": "forward_node0"
 // JSON: "dst": "forward_node1"
-// JSON: "kind": "dram"
+// JSON: "kind": "port"
 
 module {
   func.func @forward_node0_leaf(%arg0: memref<16xi8, #hls.mem<bram_t2p>>) attributes {inline, resource = #hls.res<lut = 0, dsp = 2, bram = 0>} {

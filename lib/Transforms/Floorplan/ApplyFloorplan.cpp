@@ -57,7 +57,7 @@ struct ApplyFloorplan : public ApplyFloorplanBase<ApplyFloorplan> {
         auto func = module.lookupSymbol<func::FuncOp>(kv.first);
         if (!func) {
           module.emitWarning("floorplan assignment names unknown function ")
-              << kv.first;
+              << kv.first.str();
           continue;
         }
         if (auto slr = kv.second.getAsInteger()) {
@@ -93,7 +93,7 @@ struct ApplyFloorplan : public ApplyFloorplanBase<ApplyFloorplan> {
         auto it = channels.find(kv.first);
         if (it == channels.end()) {
           module.emitWarning("floorplan channel id not found in IR: ")
-              << kv.first;
+              << kv.first.str();
           continue;
         }
         auto *obj = kv.second.getAsObject();

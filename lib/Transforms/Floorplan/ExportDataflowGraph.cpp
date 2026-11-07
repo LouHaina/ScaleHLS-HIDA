@@ -76,7 +76,7 @@ struct ExportDataflowGraph
     topFunc = top;
   }
 
-  llvm::MapVector<std::string, NodeRecord> nodes;
+  llvm::MapVector<StringRef, NodeRecord> nodes;
   SmallVector<EdgeRecord> edges;
   unsigned channelCounter = 0;
 
@@ -158,7 +158,7 @@ struct ExportDataflowGraph
   }
 
   void recordNode(func::FuncOp func, StringRef parent, bool isUnit) {
-    auto &rec = nodes[func.getName().str()];
+    auto &rec = nodes[func.getName()];
     rec.name = func.getName().str();
     rec.parent = parent.str();
     rec.isUnit = isUnit;

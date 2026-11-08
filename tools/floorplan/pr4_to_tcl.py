@@ -6,6 +6,7 @@ import sys, json, math
 sys.path.insert(0, sys.argv[0].rsplit('/', 1)[0])
 import proto_floorplan as pf
 cpp, out_tcl, out_json = sys.argv[1:4]
+strip = sys.argv[4] if len(sys.argv) > 4 else 'full'  # clock-region columns x0-x1, as in run_pnr.tcl
 K = 3
 funcs = pf.parse_cpp(cpp)
 units, leaves, parent, edges, areas = pf.build_graph(funcs, 'forward')
@@ -21,7 +22,9 @@ for k in range(K):
     us = sorted(u for u in units if asg[u] == k)
     L += [f'# SLR{k}: ' + ' '.join(us),
           f'create_pblock pblock_slr{k}',
-          f'resize_pblock pblock_slr{k} -add {{SLR{k}}}',
+          (f'resize_pblock pblock_slr{k} -add {{SLR{k}}}' if strip == 'full' else
+           'resize_pblock pblock_slr{0} -add {{CLOCKREGION_X{1}Y{2}:CLOCKREGION_X{3}Y{4}}}'.format(
+               k, strip.split('-')[0], 4 * k, strip.split('-')[1], 4 * k + 3)),
           f'set_property CONTAIN_ROUTING true [get_pblocks pblock_slr{k}]',
           f'set_property SNAPPING_MODE ON [get_pblocks pblock_slr{k}]',
           'set cells [list]']

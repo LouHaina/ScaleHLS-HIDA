@@ -171,8 +171,8 @@ def solve(units, edges, crs, rows_per_slr, rho, slr_pen, region, time_limit, fre
 def pblock_range(s, crs, rows_per_slr):
     if s.startswith('SLR'):
         k = int(s[3:]); lo, hi = k * rows_per_slr, k * rows_per_slr + rows_per_slr - 1
-        xmax = max(v['x'] for v in crs.values())
-        return f'CLOCKREGION_X0Y{lo}:CLOCKREGION_X{xmax}Y{hi}'
+        xmin = min(v['x'] for v in crs.values()); xmax = max(v['x'] for v in crs.values())
+        return f'CLOCKREGION_X{xmin}Y{lo}:CLOCKREGION_X{xmax}Y{hi}'
     return f'CLOCKREGION_{s}:CLOCKREGION_{s}'
 
 
@@ -214,6 +214,7 @@ def main():
     ap.add_argument('--slot-mode', choices=['cr', 'slr'], default='cr')
     ap.add_argument('--balance', type=float, default=0.0, help='weight of max per-slot utilisation')
     ap.add_argument('--pin', default='', help='unit=slot,... fixed assignments (e.g. top=SLR1)')
+    ap.add_argument('--strip', help='clock-region columns x0-x1 the design is confined to')
     ap.add_argument('--time', type=float, default=120)
     ap.add_argument('--out-tcl', required=True)
     ap.add_argument('--out-json', required=True)
@@ -225,6 +226,9 @@ def main():
         for k, v in read_feedback(a.feedback, units, a.feedback_top).items():
             edges[k] += a.feedback_weight * v
     crs_all = read_crs(a.crs)
+    if a.strip:
+        x0, x1 = map(int, a.strip.split('-'))
+        crs_all = {c: v for c, v in crs_all.items() if x0 <= v['x'] <= x1}
     crs = slr_slots(crs_all, 4) if a.slot_mode == 'slr' else crs_all
     pin = dict(kv.split('=') for kv in a.pin.split(',') if kv)
     region = None

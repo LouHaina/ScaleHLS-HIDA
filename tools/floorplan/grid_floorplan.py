@@ -49,13 +49,21 @@ def read_units(hier_rpt):
 
 
 def read_edges(nets_csv, units):
-    """Top-level nets -> weighted unit pairs (driver -> each sink unit)."""
+    """Top-level connectivity -> weighted unit pairs.
+
+    Accepts nets.csv from extract_graph.tcl (one row per net, ';'-separated
+    sinks, weight 1 per net) or from extract_nets.tcl (one row per unit pair
+    with a 'bits' column).  Names that are not depth-1 cells (flattened
+    top-level glue) are folded into 'top'."""
     w = defaultdict(float)
+    canon = lambda n: n if n in units else 'top'
     for r in csv.DictReader(open(nets_csv)):
-        d = r['driver']
+        d = canon(r['driver'])
+        bits = float(r.get('bits') or 1)
         for s in r['sinks'].split(';'):
-            if s != d and d in units and s in units:
-                w[tuple(sorted((d, s)))] += 1.0
+            s = canon(s)
+            if s != d:
+                w[tuple(sorted((d, s)))] += bits
     return w
 
 
@@ -86,6 +94,11 @@ def read_crs(cr_csv):
         crs[r['cr']] = dict(x=int(r['x']), y=int(r['y']), lut=8 * int(r['slice']),
                             ff=16 * int(r['slice']), dsp=int(r['dsp']),
                             bram=int(r['ramb36']), uram=int(r['uram']))
+    if all(v['bram'] == 0 for v in crs.values()):
+        # extract_graph.tcl matched no RAMB36 site type on this device; use the
+        # device average (xcvu37p: 2016 RAMB36 tiles over 96 clock regions).
+        for v in crs.values():
+            v['bram'] = 21
     return crs
 
 

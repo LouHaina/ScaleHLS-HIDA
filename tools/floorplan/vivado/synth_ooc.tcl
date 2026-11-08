@@ -4,7 +4,7 @@ set d [lindex $argv 0]
 set v $d/hls_prj/sol/syn/verilog
 create_project -in_memory -part xcvu37p-fsvh2892-2L-e
 foreach ip [glob -nocomplain $v/*_ip.tcl] { source $ip }
-if {[llength [get_ips]] > 0} { generate_target all [get_ips]; synth_ip [get_ips] }
+if {[llength [get_ips]] > 0} { generate_target all [get_ips] }
 read_verilog [glob $v/*.v]
 foreach dat [glob -nocomplain $v/*.dat] { file copy -force $dat . }
 synth_design -top forward -mode out_of_context -part xcvu37p-fsvh2892-2L-e

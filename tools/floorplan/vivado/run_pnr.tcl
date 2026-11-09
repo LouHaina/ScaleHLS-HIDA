@@ -11,21 +11,23 @@ if {$strip eq ""} { set strip full }
 set_param general.maxThreads 8
 file mkdir $out_dir
 set t0 [clock seconds]
-open_checkpoint $cfg/post_synth.dcp
-catch {delete_pblocks [get_pblocks]}
-if {$fp_tcl ne "none"} { source $fp_tcl }
-if {$strip ne "full"} {
-    # everything the floorplan did not place (all cells for fp=none) stays in the strip
-    lassign [split $strip -] x0 x1
-    create_pblock pb_strip
-    resize_pblock pb_strip -add "CLOCKREGION_X${x0}Y0:CLOCKREGION_X${x1}Y11"
-    set_property SNAPPING_MODE ON [get_pblocks pb_strip]
-    set rest [get_cells -quiet -filter {PBLOCK == ""}]
-    if {[llength $rest]} { add_cells_to_pblock pb_strip $rest }
-    puts "strip $strip: [llength $rest] top-level cells in pb_strip"
+if {$stage ne "resume"} {
+    open_checkpoint $cfg/post_synth.dcp
+    catch {delete_pblocks [get_pblocks]}
+    if {$fp_tcl ne "none"} { source $fp_tcl }
+    if {$strip ne "full"} {
+        # everything the floorplan did not place (all cells for fp=none) stays in the strip
+        lassign [split $strip -] x0 x1
+        create_pblock pb_strip
+        resize_pblock pb_strip -add "CLOCKREGION_X${x0}Y0:CLOCKREGION_X${x1}Y11"
+        set_property SNAPPING_MODE ON [get_pblocks pb_strip]
+        set rest [get_cells -quiet -filter {PBLOCK == ""}]
+        if {[llength $rest]} { add_cells_to_pblock pb_strip $rest }
+        puts "strip $strip: [llength $rest] top-level cells in pb_strip"
+    }
+    create_clock -period 3.33 [get_ports ap_clk]
+    set_clock_uncertainty 0.2 [get_clocks ap_clk]
 }
-create_clock -period 3.33 [get_ports ap_clk]
-set_clock_uncertainty 0.2 [get_clocks ap_clk]
 
 proc wns {} { get_property SLACK [get_timing_paths -max_paths 1 -setup] }
 proc tns {} {
@@ -56,14 +58,20 @@ proc dump {out_dir tag} {
     close $f
 }
 
-opt_design
-place_design -directive $directive
-phys_opt_design
-write_checkpoint -force $out_dir/post_place.dcp
-set wp [wns]; set tp [tns]; set t_place [expr {[clock seconds]-$t0}]
-dump $out_dir place
-set line "fp=$fp_tcl directive=$directive strip=$strip place_wns=$wp place_tns=$tp place_s=$t_place"
-if {$stage eq "route"} {
+if {$stage eq "resume"} {
+    # route a previous place-stage run of the same out_dir
+    set line [string trim [read [open $out_dir/summary.txt]]]
+    open_checkpoint $out_dir/post_place.dcp
+} else {
+    opt_design
+    place_design -directive $directive
+    phys_opt_design
+    write_checkpoint -force $out_dir/post_place.dcp
+    set wp [wns]; set tp [tns]; set t_place [expr {[clock seconds]-$t0}]
+    dump $out_dir place
+    set line "fp=$fp_tcl directive=$directive strip=$strip place_wns=$wp place_tns=$tp place_s=$t_place"
+}
+if {$stage eq "route" || $stage eq "resume"} {
     route_design
     write_checkpoint -force $out_dir/post_route.dcp
     report_route_status -file $out_dir/route_status.rpt

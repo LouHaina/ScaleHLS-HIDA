@@ -23,7 +23,7 @@ import argparse, csv, json, os, re, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import grid_floorplan as gf  # noqa: E402
 
-CLASSES = ('ctrl_broadcast', 'fsm_axi_gate', 'unit_internal', 'placement_xslr', 'placement_local')
+CLASSES = ('ctrl_broadcast', 'fsm_axi_gate', 'unit_internal', 'unit_density', 'placement_xslr', 'placement_local')
 
 
 def cell_of(pin, cells):
@@ -43,7 +43,9 @@ def classify(rows, cells):
                 re.search(r'loop_dataflow_output_count|ap_sync_reg|ap_done_reg', r['end']):
             c['ctrl_broadcast'] += 1
         elif s == e and logic >= route:
-            c['unit_internal'] += 1
+            c['unit_internal'] += 1          # logic depth inside one unit
+        elif s == e and s != 'top':
+            c['unit_density'] += 1           # wire-dominated path inside one unit
         else:
             c['placement_xslr' if r['inter_slr'] == '1' else 'placement_local'] += 1
     return c
@@ -78,6 +80,11 @@ def main():
                 continue
             k = tuple(sorted((s, e)))
             crit[k] = crit.get(k, 0) + 1.0 + (best - float(r['slack'])) / max(best - worst, 1e-3)
+    dense = {}
+    for r in rows:
+        s, e = cell_of(r['start'], units), cell_of(r['end'], units)
+        if s == e and s != 'top' and float(r['route']) > float(r['logic']):
+            dense[s] = dense.get(s, 0) + 1
     kv = dict(re.findall(r'(\w+)=(\S+)', open(os.path.join(a.run, 'summary.txt')).read()))
     prev = json.load(open(a.prev))
     fb = dict(
@@ -86,6 +93,8 @@ def main():
         critical=[dict(a=x, b=y, weight=round(w, 3)) for (x, y), w in sorted(crit.items())],
         path_classes=classify(rows, units),
         previous=prev['assignment'],
+        dense_units=dense,
+        slot_rho=prev.get('slot_rho', {}),
         slot_mode=prev.get('slot_mode', 'slr'),
         applied_rtl=[p for p in a.applied.split(',') if p],
         wns=float(kv.get(f'{a.stage}_wns', 'nan')),

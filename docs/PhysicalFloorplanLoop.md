@@ -42,9 +42,13 @@ every iteration is appended to `<dir>/iterations.csv` with the baseline of the s
 | `fsm_axi_gate`: top FSM state -> m_axi adapters | RTL pass `ungate_axi` (remove redundant single-user gating) |
 | `placement_local`: long routes inside one SLR, slots are SLRs | refine slots to half-SLR bands, feed back critical pairs |
 | `placement_xslr` | feed back critical pairs |
+| `unit_density`: wire-dominated path inside one unit (unit squeezed in a dense slot) | lower that slot's capacity limit (x0.85, carried to later iterations), re-solve |
 | `unit_internal`: logic inside one unit | stop (no floorplan can help) |
 
-The loop stops on `stop` or when WNS improves by less than 0.02 ns twice.
+With `--measure-first`, iteration 0 starts from an unconstrained Vivado run of the
+unmodified RTL (measured sizes, connectivity, path classes) instead of the
+compiler estimates. The loop stops on `stop` or when neither WNS improves by
+0.1 ns nor TNS by 10% twice in a row (Vivado run-to-run noise is 0.1-0.3 ns).
 
 ## Solver
 

@@ -79,7 +79,11 @@ def main():
     ap.add_argument('--work', required=True)
     ap.add_argument('--strip', default='0-2')
     ap.add_argument('--max-iters', type=int, default=8)
-    ap.add_argument('--min-gain', type=float, default=0.02)
+    ap.add_argument('--min-gain', type=float, default=0.1, help='WNS gain (ns) that counts as progress')
+    ap.add_argument('--min-tns-gain', type=float, default=0.1, help='relative TNS gain that counts as progress')
+    ap.add_argument('--measure-first', action='store_true',
+                    help='iteration 0 starts from the feedback of an unconstrained Vivado run '
+                         'instead of the compiler estimates')
     ap.add_argument('--pass-opts', default='', help='extra scalehls-physical-floorplan options')
     a = ap.parse_args()
     W = os.path.join(ROOT, a.work)
@@ -92,7 +96,26 @@ def main():
         w.writerow(['iter', 'rtl_passes', 'slots', 'action', 'moved', 'slr_cut_weight', 'wns', 'tns',
                     'baseline_wns', 'baseline_tns', 'path_classes'])
 
-    fb, best, stall, baselines = None, None, 0, {}
+    fb, best, best_tns, stall, baselines = None, None, None, 0, {}
+    prev_passes = []
+    if a.measure_first:
+        # Vivado without floorplan on the unmodified RTL: measured sizes,
+        # connectivity and path classes before any floorplan decision
+        cfg = netlist(a.base, a.work, [])
+        out = place(cfg, 'none', a.strip)
+        baselines[cfg] = summary(out)
+        empty = os.path.join(W, 'it_measure.json')
+        json.dump(dict(assignment={}, slot_mode='slr'), open(empty, 'w'))
+        fb = f'{a.work}/fb_measure.json'
+        sh(f'{sys.executable} {HERE}/make_feedback.py --hier-util {a.base}/hier_util.rpt '
+           f'--nets {a.base}/graph/nets.csv --rtl {a.base}/hls_prj/sol/syn/verilog '
+           f'--run {out} --prev {empty} --applied= --out {fb}')
+        cls = json.load(open(os.path.join(ROOT, fb)))['path_classes']
+        b = baselines[cfg]
+        w.writerow(['measure', '', '', 'no floorplan', 0, '', b[0], b[1], b[0], b[1],
+                    ' '.join(f'{c}:{n}' for c, n in cls.items() if n)])
+        log.flush()
+        print(f'ITER measure wns={b[0]} tns={b[1]} classes={cls}', flush=True)
     for k in range(a.max_iters):
         js, tcl = f'{a.work}/it{k}.json', f'{a.work}/it{k}.tcl'
         opts = f'device={DEVICE} strip={a.strip} out-tcl={tcl} out-json={js}'
@@ -125,14 +148,17 @@ def main():
         log.flush()
         print(f'ITER {k} {plan["action"]} rtl={passes} slots={plan["slot_mode"]} moved={plan["moved"]} '
               f'wns={wns} tns={tns} baseline={b} classes={cls}', flush=True)
-        rtl_changed = k > 0 and passes != prev_passes
-        gain = None if best is None else wns - best
+        rtl_changed = passes != prev_passes
+        progress = best is None or wns - best >= a.min_gain or \
+            (best_tns < 0 and (tns - best_tns) / -best_tns >= a.min_tns_gain)
         best = wns if best is None else max(best, wns)
-        stall = 0 if (gain is None or gain >= a.min_gain or rtl_changed) else stall + 1
+        best_tns = tns if best_tns is None else max(best_tns, tns)
+        stall = 0 if (progress or rtl_changed) else stall + 1
         prev_passes = passes
         fb = fbk
         if stall >= 2:
-            print(f'ITER {k}: converged (WNS gain < {a.min_gain} ns twice)', flush=True)
+            print(f'ITER {k}: converged (no WNS gain >= {a.min_gain} ns or TNS gain >= '
+                  f'{a.min_tns_gain:.0%} twice)', flush=True)
             break
 
 

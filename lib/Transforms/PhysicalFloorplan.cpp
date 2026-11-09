@@ -149,6 +149,11 @@ struct PhysicalFloorplanPass
   Option<std::string> pinNodes{
       *this, "pin", llvm::cl::init("top,control_s_axi_U"),
       llvm::cl::desc("Nodes pinned to the middle slot")};
+  Option<double> derate{*this, "density-derate", llvm::cl::init(0.85),
+                        llvm::cl::desc("Capacity factor applied to a slot whose units "
+                                       "show wire-dominated internal paths")};
+  Option<double> minRho{*this, "min-rho", llvm::cl::init(0.45),
+                        llvm::cl::desc("Lower bound of a derated slot capacity")};
   Option<int> restarts{*this, "restarts", llvm::cl::init(16),
                        llvm::cl::desc("Local-search restarts")};
   Option<int> perturbIters{*this, "perturb", llvm::cl::init(400),
@@ -167,6 +172,9 @@ struct PhysicalFloorplanPass
   double prevWns = NAN;
   bool haveFeedback = false;
   std::vector<std::string> dropped;
+  std::map<std::string, double> slotRhoIn;  // capacity limits of the previous iteration
+  std::map<std::string, double> denseUnits; // cell -> wire-dominated internal paths
+  std::vector<double> rhoS;                 // capacity limit per slot
 
   int nodeFor(const std::string &key, const std::string &kind) {
     auto it = index.find(key);
@@ -323,6 +331,14 @@ struct PhysicalFloorplanPass
       for (auto &v : *ar)
         if (auto s = v.getAsString())
           appliedRtl.push_back(s->str());
+    if (auto *sr = root->getObject("slot_rho"))
+      for (auto &kv : *sr)
+        if (auto v = kv.second.getAsNumber())
+          slotRhoIn[kv.first.str()] = *v;
+    if (auto *du = root->getObject("dense_units"))
+      for (auto &kv : *du)
+        if (auto v = kv.second.getAsNumber())
+          denseUnits[kv.first.str()] = *v;
     if (auto s = root->getString("slot_mode"))
       prevSlotMode = s->str();
     if (auto w = root->getNumber("wns"))
@@ -441,7 +457,7 @@ struct PhysicalFloorplanPass
             int n) const {
     for (int r = 0; r < kNumRes; ++r)
       if (nodes[n].res[r] > 0 &&
-          load[s][r] + nodes[n].res[r] > rho * slots[s].cap[r] + 1e-9)
+          load[s][r] + nodes[n].res[r] > rhoS[s] * slots[s].cap[r] + 1e-9)
         return false;
     return true;
   }
@@ -518,8 +534,8 @@ struct PhysicalFloorplanPass
             }
             bool ok = true;
             for (int r = 0; r < kNumRes && ok; ++r)
-              ok = load[s0][r] <= rho * slots[s0].cap[r] + 1e-9 &&
-                   load[s][r] <= rho * slots[s].cap[r] + 1e-9;
+              ok = load[s0][r] <= rhoS[s0] * slots[s0].cap[r] + 1e-9 &&
+                   load[s][r] <= rhoS[s] * slots[s].cap[r] + 1e-9;
             if (ok) {
               double before = base + nodeEdgeCost(m, s);
               slot[n] = s;
@@ -593,7 +609,7 @@ struct PhysicalFloorplanPass
             }
           bool ok = true;
           for (int r = 0; r < kNumRes && ok; ++r)
-            ok = load[s][r] <= rho * slots[s].cap[r] + 1e-9;
+            ok = load[s][r] <= rhoS[s] * slots[s].cap[r] + 1e-9;
           if (ok) {
             double d = grpCost(s) - base + (balTerm(load) - mu0);
             if (d < bestD) {
@@ -767,6 +783,8 @@ struct PhysicalFloorplanPass
           rtl.push_back("ctrl");
         rtl.push_back("ungate_axi");
         action = "rtl:ungate_axi";
+      } else if (dom->first == "unit_density") {
+        action = "density:derate";
       } else if (dom->first == "placement_local" && slotMode == "auto" &&
                  mode == "slr") {
         mode = "band";
@@ -780,6 +798,25 @@ struct PhysicalFloorplanPass
     if (failed(readDevice(crs)))
       return signalPassFailure();
     buildSlots(crs, mode);
+    rhoS.assign(slots.size(), rho);
+    for (unsigned s = 0; s < slots.size(); ++s) {
+      auto it = slotRhoIn.find(slots[s].name);
+      if (it != slotRhoIn.end())
+        rhoS[s] = it->second;
+    }
+    if (action == "density:derate") {
+      // slots whose units have wire-dominated internal paths are too dense:
+      // lower their capacity limit; the limit carries over to later iterations
+      std::set<std::string> hot;
+      for (auto &kv : denseUnits) {
+        auto it = prevAssign.find(keyOfCell(kv.first));
+        if (it != prevAssign.end())
+          hot.insert(it->second);
+      }
+      for (unsigned s = 0; s < slots.size(); ++s)
+        if (hot.count(slots[s].name))
+          rhoS[s] = std::max<double>(minRho, rhoS[s] * derate);
+    }
 
     // ---- solver setup
     unsigned N = nodes.size();
@@ -871,7 +908,7 @@ struct PhysicalFloorplanPass
         bool ok = true;
         for (unsigned s = 0; s < slots.size() && ok; ++s)
           for (int r = 0; r < kNumRes && ok; ++r)
-            ok = load[s][r] <= rho * slots[s].cap[r] + 1e-9;
+            ok = load[s][r] <= rhoS[s] * slots[s].cap[r] + 1e-9;
         if (!ok)
           continue;
         Solution sol = localSearch(cand, rng);
@@ -921,6 +958,10 @@ struct PhysicalFloorplanPass
       rtlArr.push_back(p);
     out["assignment"] = std::move(asg);
     out["slot_util"] = std::move(loads);
+    llvm::json::Object rhoOut;
+    for (unsigned s = 0; s < slots.size(); ++s)
+      rhoOut[slots[s].name] = rhoS[s];
+    out["slot_rho"] = std::move(rhoOut);
     out["slot_mode"] = mode;
     out["cost"] = best.cost;
     out["slr_cut_weight"] = cut;

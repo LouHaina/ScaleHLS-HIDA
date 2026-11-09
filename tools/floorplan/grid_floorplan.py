@@ -48,7 +48,38 @@ def read_units(hier_rpt):
     return units
 
 
-def read_edges(nets_csv, units):
+def rtl_owner_map(vdir, units):
+    """Instance name -> depth-1 cell that contains it, from the HLS Verilog.
+
+    extract_nets.tcl sometimes reports a nested instance without its parent
+    prefix (e.g. dataflow_in_loop_..._U0 inside grp_forward_node52_fu_2182);
+    such names are mapped to their owner here instead of being folded into top.
+    Names that are ambiguous (instantiated under several units) are left out."""
+    import glob, os
+    inst = re.compile(r'^\s*(\w+)\s+(?:#\(.*?\)\s*)?(\w+)\s*\(', re.M)
+    children = {}
+    for f in glob.glob(os.path.join(vdir, '*.v')):
+        txt = open(f, errors='replace').read()
+        for mod, body in re.findall(r'^module\s+(\w+)(.*?)^endmodule', txt, re.M | re.S):
+            children[mod] = [(m, i) for m, i in inst.findall(body) if m not in ('module', 'always', 'if', 'assign')]
+    owner = {}
+    top_children = dict((i, m) for m, i in children.get('forward', []))
+    for u in units:
+        if u not in top_children:
+            continue
+        stack, seen = [top_children[u]], set()
+        while stack:
+            mod = stack.pop()
+            if mod in seen:
+                continue
+            seen.add(mod)
+            for m, i in children.get(mod, []):
+                owner.setdefault(i, set()).add(u)
+                stack.append(m)
+    return {i: next(iter(us)) for i, us in owner.items() if len(us) == 1}
+
+
+def read_edges(nets_csv, units, owner=None):
     """Top-level connectivity -> weighted unit pairs.
 
     Accepts nets.csv from extract_graph.tcl (one row per net, ';'-separated
@@ -56,7 +87,8 @@ def read_edges(nets_csv, units):
     with a 'bits' column).  Names that are not depth-1 cells (flattened
     top-level glue) are folded into 'top'."""
     w = defaultdict(float)
-    canon = lambda n: n if n in units else 'top'
+    owner = owner or {}
+    canon = lambda n: n if n in units else owner.get(n, 'top')
     for r in csv.DictReader(open(nets_csv)):
         d = canon(r['driver'])
         bits = float(r.get('bits') or 1)
@@ -227,6 +259,7 @@ def main():
     ap.add_argument('--hier-util', required=True)
     ap.add_argument('--nets', required=True)
     ap.add_argument('--crs', required=True)
+    ap.add_argument('--rtl', help='HLS Verilog dir: map nested instance names to their unit')
     ap.add_argument('--feedback', help='paths.csv of a previous routed run')
     ap.add_argument('--feedback-top', type=int, default=100)
     ap.add_argument('--feedback-weight', type=float, default=1.0)
@@ -248,7 +281,7 @@ def main():
     a = ap.parse_args()
     units = read_units(a.hier_util)
     units.pop('forward', None)
-    edges = read_edges(a.nets, units)
+    edges = read_edges(a.nets, units, rtl_owner_map(a.rtl, units) if a.rtl else None)
     if a.feedback:
         for k, v in read_feedback(a.feedback, units, a.feedback_top).items():
             edges[k] += a.feedback_weight * v

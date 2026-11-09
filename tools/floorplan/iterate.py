@@ -130,6 +130,7 @@ def main():
         done = os.path.exists(os.path.join(ROOT, cfg, f'out_it{k}_Default_place', 'summary.txt'))
         if not done:
           sh(f'{PY} {HERE}/grid_floorplan.py --hier-util {a.base}/hier_util.rpt --nets {a.base}/graph/nets.csv '
+           f'--rtl {a.base}/hls_prj/sol/syn/verilog '
            f'--crs {CRS} --slot-mode {mode} --strip {a.strip} --rho 0.75 --balance 2000 --pin {pin} '
            + (f'--feedback {fbcsv} --feedback-top {100 * len(fb)} --feedback-weight {a.fb_weight} ' if fb else '')
            + (f'--prev {prev_json} ' if prev_json else '')

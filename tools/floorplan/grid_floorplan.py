@@ -114,7 +114,7 @@ def slr_slots(crs, rows_per_slr):
 
 
 def solve(units, edges, crs, rows_per_slr, rho, slr_pen, region, time_limit, free,
-          balance=0.0, pin=None):
+          balance=0.0, pin=None, prev=None, stay=0.0):
     from ortools.sat.python import cp_model
     m = cp_model.CpModel()
     nodes = [u for u in units if u not in free]
@@ -148,6 +148,15 @@ def solve(units, edges, crs, rows_per_slr, rho, slr_pen, region, time_limit, fre
                     m.Add(sum(int(1000 * units[n][r]) * y[n, s] for n in nodes if units[n][r] > 0)
                           <= mx * crs[s][r])
         cost.append(int(balance) * mx)
+    if prev and stay > 0:
+        # stability (iterative loop): moving a node away from its slot of the
+        # previous iteration costs stay * its LUT share, so ties and mirror
+        # images do not reshuffle the design between iterations
+        tot = sum(units[n]['lut'] for n in nodes) or 1
+        for n in nodes:
+            if prev.get(n) in slots:
+                c = int(round(stay * 1000 * max(units[n]['lut'], 1) / tot)) or 1
+                cost.append(c * (1 - y[n, prev[n]]))
     for (a, b), w in edges.items():
         if a not in X or b not in X:
             continue
@@ -168,7 +177,22 @@ def solve(units, edges, crs, rows_per_slr, rho, slr_pen, region, time_limit, fre
     return asg, status, sol.ObjectiveValue(), time.time() - t0
 
 
-def pblock_range(s, crs, rows_per_slr):
+def band_slots(crs, rows):
+    """Aggregate clock regions into horizontal bands of <rows> rows (B<first row>)."""
+    out = {}
+    for c, v in crs.items():
+        y0 = v['y'] // rows * rows
+        s = out.setdefault(f'B{y0}', dict(x=0, y=y0, rows=rows, lut=0, ff=0, dsp=0, bram=0, uram=0))
+        for r in ('lut', 'ff', 'dsp', 'bram', 'uram'):
+            s[r] += v[r]
+    return out
+
+
+def pblock_range(s, crs, rows_per_slr, band_rows=2):
+    if s.startswith('B'):
+        lo = int(s[1:]); hi = lo + band_rows - 1
+        xmin = min(v['x'] for v in crs.values()); xmax = max(v['x'] for v in crs.values())
+        return f'CLOCKREGION_X{xmin}Y{lo}:CLOCKREGION_X{xmax}Y{hi}'
     if s.startswith('SLR'):
         k = int(s[3:]); lo, hi = k * rows_per_slr, k * rows_per_slr + rows_per_slr - 1
         xmin = min(v['x'] for v in crs.values()); xmax = max(v['x'] for v in crs.values())
@@ -176,7 +200,7 @@ def pblock_range(s, crs, rows_per_slr):
     return f'CLOCKREGION_{s}:CLOCKREGION_{s}'
 
 
-def emit_tcl(asg, path, contain_routing, crs_all=None):
+def emit_tcl(asg, path, contain_routing, crs_all=None, band_rows=2):
     by = defaultdict(list)
     for n, s in asg.items():
         by[s].append(n)
@@ -184,7 +208,7 @@ def emit_tcl(asg, path, contain_routing, crs_all=None):
          'catch {delete_pblocks [get_pblocks]}']
     for s, ns in sorted(by.items()):
         pb = f'pb_{s}'
-        L += [f'create_pblock {pb}', f'resize_pblock {pb} -add {{{pblock_range(s, crs_all, 4)}}}',
+        L += [f'create_pblock {pb}', f'resize_pblock {pb} -add {{{pblock_range(s, crs_all, 4, band_rows)}}}',
               f'set_property CONTAIN_ROUTING {str(contain_routing).lower()} [get_pblocks {pb}]',
               f'set_property SNAPPING_MODE ON [get_pblocks {pb}]', 'set cells [list]']
         for n in sorted(ns):
@@ -211,10 +235,13 @@ def main():
     ap.add_argument('--rows', help='allowed clock-region rows, e.g. 4-7')
     ap.add_argument('--free', default='', help='comma list of units left unconstrained')
     ap.add_argument('--contain-routing', action='store_true')
-    ap.add_argument('--slot-mode', choices=['cr', 'slr'], default='cr')
+    ap.add_argument('--slot-mode', choices=['cr', 'slr', 'band'], default='cr')
+    ap.add_argument('--band-rows', type=int, default=2)
     ap.add_argument('--balance', type=float, default=0.0, help='weight of max per-slot utilisation')
     ap.add_argument('--pin', default='', help='unit=slot,... fixed assignments (e.g. top=SLR1)')
     ap.add_argument('--strip', help='clock-region columns x0-x1 the design is confined to')
+    ap.add_argument('--prev', help='assignment json of the previous iteration (stability term)')
+    ap.add_argument('--stay', type=float, default=1000.0, help='weight of the stability term')
     ap.add_argument('--time', type=float, default=120)
     ap.add_argument('--out-tcl', required=True)
     ap.add_argument('--out-json', required=True)
@@ -229,15 +256,17 @@ def main():
     if a.strip:
         x0, x1 = map(int, a.strip.split('-'))
         crs_all = {c: v for c, v in crs_all.items() if x0 <= v['x'] <= x1}
-    crs = slr_slots(crs_all, 4) if a.slot_mode == 'slr' else crs_all
+    crs = {'slr': lambda: slr_slots(crs_all, 4), 'band': lambda: band_slots(crs_all, a.band_rows),
+           'cr': lambda: crs_all}[a.slot_mode]()
     pin = dict(kv.split('=') for kv in a.pin.split(',') if kv)
     region = None
     if a.rows:
         lo, hi = map(int, a.rows.split('-')); region = set(range(lo, hi + 1))
     free = set(f for f in a.free.split(',') if f)
     asg, st, obj, dt = solve(units, edges, crs, 4, a.rho, a.slr_pen, region, a.time, free,
-                             a.balance, pin)
-    emit_tcl(asg, a.out_tcl, a.contain_routing, crs_all)
+                             a.balance, pin,
+                             json.load(open(a.prev))['assignment'] if a.prev else None, a.stay)
+    emit_tcl(asg, a.out_tcl, a.contain_routing, crs_all, a.band_rows)
     json.dump(dict(assignment=asg, edges={f'{k[0]}|{k[1]}': v for k, v in edges.items()},
                    status=st, objective=obj), open(a.out_json, 'w'), indent=1)
     used = sorted(set(asg.values()), key=lambda s: (crs[s]['y'], crs[s]['x']))

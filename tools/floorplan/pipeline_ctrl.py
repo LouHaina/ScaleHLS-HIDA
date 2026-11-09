@@ -27,7 +27,20 @@ Why it is safe (cost: one cycle per top-level invocation of stateN):
     so ap_continue is a single-cycle pulse as before.
 The ap_ready / ap_start handshake is left untouched.
 
-usage: pipeline_ctrl.py <in forward.v> <out forward.v>
+Second rewrite (--ungate-axi): Vitis gates every m_axi handshake signal of a
+unit with the FSM state(s) in which that unit runs,
+
+    axi_N_ARVALID = (state1 | state2) ? unit_ARVALID : 0
+
+When the bundle has a single user (the case for all bundles of the HIDA
+designs), the gate is redundant: the unit is idle outside those states and an
+idle HLS unit holds its VALIDs low, and a READY asserted with no outstanding
+transaction transfers nothing.  The gate makes the top FSM state register a
+driver of every AXI adapter (critical after the first rewrite: ~95% of the
+worst paths, SLR crossings), so it is removed.  Bundles with more than one
+user are left alone.
+
+usage: pipeline_ctrl.py <in forward.v> <out forward.v> [--ungate-axi]
 """
 import re, sys
 
@@ -55,6 +68,20 @@ for st in states:
             'end',
             f'always @ (*) {blk} = ~{q};']
     print(f'{st}: registered {blk}')
+if '--ungate-axi' in sys.argv:
+    pat = re.compile(r"always @ \(\*\) begin\n\s*if \(\(\(1'b1 == ap_CS_fsm_state\d+\)( \| \(1'b1 == ap_CS_fsm_state\d+\))*\)\) begin\n"
+                     r"\s*(axi_\d+_\w+) = (\S+);\n\s*end else begin\n\s*\2 = 1'b0;\n\s*end\nend")
+    users = {}
+    for m in pat.finditer(v):
+        users.setdefault(m.group(2), []).append(m)
+    n = 0
+    for x, ms in users.items():
+        if len(ms) != 1 or len(re.findall(rf'^\s*{x} = ', v, flags=re.M)) != 2:
+            continue  # more than one user or other assignments: keep the gate
+        m = ms[0]
+        v = v.replace(m.group(0), f'always @ (*) begin\n    {x} = {m.group(3)};  // pipeline_ctrl.py: ungated\nend', 1)
+        n += 1
+    print(f'ungated {n} single-user m_axi handshake signals')
 i = v.rindex('endmodule')
 v = v[:i] + '// pipeline_ctrl.py: registered sub-call completion\n' + '\n'.join(add) + '\n\n' + v[i:]
 open(dst, 'w').write(v)

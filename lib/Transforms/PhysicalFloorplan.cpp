@@ -717,9 +717,17 @@ struct PhysicalFloorplanPass
         else
           os << "set c [get_cells -quiet -regexp {^(grp_)?" << N.key
              << "(_[0-9]+)?(_fu_[0-9]+|_U0)$}]\n";
-        os << "if {[llength $c] != 1} { error \"floorplan: " << N.key
-           << " matched [llength $c] cells\" }\n"
-           << "lappend cells {*}$c\n";
+        if (N.kind == "axi" && N.cell.empty())
+          // iteration 0: an AXI bundle may have been optimized away by HLS or
+          // synthesis; nothing to place then
+          os << "if {[llength $c] == 0} { puts \"floorplan: " << N.key
+             << "_m_axi_U not in netlist, skipped\" }\n"
+             << "if {[llength $c] > 1} { error \"floorplan: " << N.key
+             << " matched [llength $c] cells\" }\n";
+        else
+          os << "if {[llength $c] != 1} { error \"floorplan: " << N.key
+             << " matched [llength $c] cells\" }\n";
+        os << "lappend cells {*}$c\n";
       }
       os << "add_cells_to_pblock " << pb << " $cells\n";
     }

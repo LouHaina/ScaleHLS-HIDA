@@ -115,7 +115,7 @@ def main():
         fbk = f'{a.work}/fb{k}.json'
         cls = json.loads(sh(f'{sys.executable} {HERE}/make_feedback.py --hier-util {a.base}/hier_util.rpt '
                             f'--nets {a.base}/graph/nets.csv --rtl {a.base}/hls_prj/sol/syn/verilog '
-                            f'--run {out} --prev {js} --applied {",".join(passes)} --out {fbk} '
+                            f'--run {out} --prev {js} --applied="{",".join(passes)}" --out {fbk} '
                             f'&& python3 -c "import json;print(json.dumps(json.load(open(\'{fbk}\'))[\'path_classes\']))"'
                             ).strip().splitlines()[-1])
         b = baselines[cfg]

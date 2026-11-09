@@ -119,6 +119,7 @@ std::unique_ptr<Pass> createLayoutPartitionPass(int numTiles,
                                                 bool enableCommOpt,
                                                 double singleSlrUtilThreshold = 0.8);
 std::unique_ptr<Pass> createLayoutPartitionPass();
+std::unique_ptr<Pass> createPhysicalFloorplanPass();
 
 #define GEN_PASS_CLASSES
 #include "scalehls/Transforms/Passes.h.inc"

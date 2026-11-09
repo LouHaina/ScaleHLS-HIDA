@@ -1,0 +1,79 @@
+{
+ "cells": {
+  "grp_node0_fu_10": {
+   "lut": 9000,
+   "ff": 9000,
+   "dsp": 100,
+   "bram": 0,
+   "uram": 0
+  },
+  "grp_node1_fu_20": {
+   "lut": 9000,
+   "ff": 9000,
+   "dsp": 100,
+   "bram": 0,
+   "uram": 0
+  },
+  "axi_0_m_axi_U": {
+   "lut": 1500,
+   "ff": 2000,
+   "dsp": 0,
+   "bram": 1,
+   "uram": 0
+  },
+  "(forward)": {
+   "lut": 500,
+   "ff": 500,
+   "dsp": 0,
+   "bram": 0,
+   "uram": 0
+  },
+  "control_s_axi_U": {
+   "lut": 300,
+   "ff": 300,
+   "dsp": 0,
+   "bram": 0,
+   "uram": 0
+  }
+ },
+ "edges": [
+  {
+   "a": "grp_node0_fu_10",
+   "b": "axi_0_m_axi_U",
+   "bits": 300
+  },
+  {
+   "a": "grp_node0_fu_10",
+   "b": "top",
+   "bits": 40
+  },
+  {
+   "a": "grp_node1_fu_20",
+   "b": "top",
+   "bits": 40
+  },
+  {
+   "a": "grp_node0_fu_10",
+   "b": "grp_node1_fu_20",
+   "bits": 64
+  }
+ ],
+ "critical": [
+  {
+   "a": "grp_node0_fu_10",
+   "b": "grp_node1_fu_20",
+   "weight": 2.0
+  }
+ ],
+ "path_classes": {
+  "ctrl_broadcast": 80,
+  "placement_local": 20
+ },
+ "previous": {
+  "node0": "SLR0",
+  "node1": "SLR1"
+ },
+ "slot_mode": "slr",
+ "applied_rtl": [],
+ "wns": -1.5
+}

@@ -564,4 +564,20 @@ def LayoutPartition : Pass<"scalehls-layout-partition", "ModuleOp"> {
   ];
 }
 
+def PhysicalFloorplan : Pass<"scalehls-physical-floorplan", "ModuleOp"> {
+  let summary = "Iterative physical-feedback floorplanning of dataflow nodes";
+  let description = [{
+    Places the dataflow nodes of the top function, their AXI adapters and the
+    controller on device slots (SLRs or half-SLR bands) and emits a Vivado
+    pblock script. Iteration 0 uses the IR (node <-> AXI bundle, shared
+    buffers, controller) and QoR estimates; later iterations read a feedback
+    file with measured cell sizes, netlist connectivity, critical unit pairs,
+    path classes and the previous assignment (tools/floorplan/make_feedback.py),
+    keep the assignment stable, and choose the next action of the loop
+    (RTL pipelining pass, slot refinement, more feedback, or stop).
+    Options are declared on the pass (see PhysicalFloorplan.cpp).
+  }];
+  let constructor = "mlir::scalehls::createPhysicalFloorplanPass()";
+}
+
 #endif // SCALEHLS_TRANSFORMS_PASSES_TD

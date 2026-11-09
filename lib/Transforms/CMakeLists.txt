@@ -52,6 +52,7 @@ add_mlir_library(MLIRScaleHLSTransforms
   FuncDuplication.cpp
   FuncPreprocess.cpp
   LayoutPartitionEnhanced.cpp
+  PhysicalFloorplan.cpp
   Passes.cpp
   Utils.cpp
 

@@ -213,35 +213,78 @@ How it works:
   share an external buffer influence each other a little and HIDA's output
   varies slightly from run to run.
 - `--baseline` graphs are compiles with the plain knob. For each one `budget`
-  reports whether it fits the same budget and its latency.
+  reports whether it fits the same budget and its latency. It reports the same
+  for each input graph, that is, for one factor on every unit.
+- `--compile "$C"` makes `budget` compile the chosen design itself; if an SLR
+  is over its budget after recompiling, it tightens the budget of that
+  resource and chooses again.
 
-### Result on ResNet18 (tile 4, U280 device file, 24 units)
+### Result on ResNet18 (U280 device file, 24 units)
 
-All numbers are HIDA's own estimates (QoR estimation pass), not HLS or Vivado
-results. Latency is the sum of the unit latencies in cycles.
+Produced by `budget_experiment.py` (below). All numbers are HIDA's own
+estimates (QoR estimation pass), not HLS or Vivado results. Latency is the sum
+of the unit latencies in cycles; the units form one dependency chain through
+their shared buffers, so the sum is also the longest path. "Knob" is the best
+of `loop-unroll-factor` = 2, 4, ..., 256 that fits the same budget; "same
+factor" is the best design with one factor on every unit.
 
-| Share per SLR | Best plain knob that fits | Its latency | Unit factors | Recompiled latency | Ratio |
-|---|---|---|---|---|---|
-| 0.6 | `loop-unroll-factor=64` | 3.09e9 | 16 64 64 64 8 64 64 64 64 1 64 64 4 4 64 4 4 1 1 1 1 1 1 64 | 2.26e9 | 1.37x |
-| 0.3 | `loop-unroll-factor=32` | 3.21e9 | 16 8 64 8 8 8 8 64 8 4 8 8 4 4 64 4 4 1 1 64 1 1 64 1 | 2.36e9 | 1.36x |
-| 0.1 | `loop-unroll-factor=2` | 3.66e9 | 9 64 64 4 2 4 2 64 4 1 4 2 64 64 64 4 64 1 1 64 1 64 64 64 | 2.62e9 | 1.39x |
+| Tile | Share per SLR | Best knob | Knob latency | Same-factor latency | Per-unit latency | vs knob | vs same factor |
+|---|---|---|---|---|---|---|---|
+| 2 | 0.1 to 0.6 | 128 | 9.14e9 | 9.13e9 | 9.10e9 | 1.00x | 1.00x |
+| 4 | 0.1 | 4 | 3.42e9 | 3.89e9 | 2.63e9 | 1.30x | 1.48x |
+| 4 | 0.2 | 16 | 2.81e9 | 3.89e9 | 2.39e9 | 1.18x | 1.63x |
+| 4 | 0.3 | 16 | 2.81e9 | 2.69e9 | 2.36e9 | 1.19x | 1.14x |
+| 4 | 0.45 | 16 | 2.81e9 | 2.69e9 | 2.29e9 | 1.23x | 1.18x |
+| 4 | 0.6 | 16 | 2.81e9 | 2.46e9 | 2.26e9 | 1.24x | 1.09x |
+| 8 | 0.1 | 4 | 1.90e9 | 2.32e9 | 1.52e9 | 1.26x | 1.53x |
+| 8 | 0.2 | 8 | 1.47e9 | 1.88e9 | 1.12e9 | 1.31x | 1.67x |
+| 8 | 0.3 | 32 | 1.20e9 | 1.78e9 | 1.01e9 | 1.19x | 1.76x |
+| 8 | 0.45 | 64 | 1.10e9 | 1.44e9 | 9.44e8 | 1.16x | 1.53x |
+| 8 | 0.6 | 64 | 1.10e9 | 1.35e9 | 9.34e8 | 1.17x | 1.44x |
+| 16 | 0.1 | none fits | - | - | none fits | - | - |
+| 16 | 0.2 | 8 | 1.02e9 | 1.43e9 | 5.93e8 | 1.72x | 2.40x |
+| 16 | 0.3 | 16 | 6.88e8 | 8.66e8 | 4.88e8 | 1.41x | 1.78x |
+| 16 | 0.45 | 16 | 6.88e8 | 8.66e8 | 4.06e8 | 1.69x | 2.13x |
+| 16 | 0.6 | 64 | 5.58e8 | 8.66e8 | 3.70e8 | 1.51x | 2.34x |
 
-In all three cases the recompiled design passed `budget-check`, and its
-latency was within 4 percent of what `budget` expected. A few units differed
-from the expected DSP count by more than 20 percent (two at 0.6, three at 0.3),
-which is the neighbour effect the margin is for.
+Checks made on these runs:
+
+- Every chosen design was compiled three more times and passed `budget-check`
+  each time (57 of 57 for the rows above). Latency varied by at most 0.5
+  percent between repeats and was within 3 percent of what `budget` expected.
+- In 4 of the 19 cases the first choice was over the BRAM budget by up to 4
+  percent after recompiling; `budget --compile` tightened the budget and chose
+  again (1 to 3 extra rounds).
+- Taking the best tile size for each budget as well, the per-unit design is
+  1.25x (share 0.1) to 1.72x (share 0.2) faster than the best plain-knob
+  design: 1.41x at 0.3, 1.69x at 0.45, 1.51x at 0.6.
+- With `--objective max` (the slowest unit instead of the sum) there is almost
+  no gain: 1.00x to 1.01x in 15 of 19 cases, because the slowest unit is
+  already at its best factor in the plain-knob design. If frames are processed
+  back to back and the units overlap, this is the number that matters.
 
 What this does and does not show:
 
-- It shows that the estimator's own numbers favour an uneven distribution: the
-  plain knob gives most of the factor to the first convolution, and several
-  later units get slower, by the estimate, when unrolled further.
+- By the estimator's numbers an uneven distribution is better than HIDA's
+  split by share of computation, and the advantage grows with the tile size.
+  At tile 2 there is nothing to gain.
+- In these estimates a larger factor does not always make a unit faster, and
+  the plain knob sometimes lands on such a factor. Whether that is real or an
+  estimator artefact needs Vitis HLS.
 - It does not show a hardware gain. The estimator reports LUT = 0 and
-  over-estimates BRAM, so here the budget is bounded by estimated BRAM and DSP
+  over-estimates BRAM, so the budget here is bounded by estimated BRAM and DSP
   only. The table has to be repeated with Vitis HLS areas and then with routed
   designs (`eval_sweep.py`) before it is a result.
-- With `loop-tile-size=4` the units stop growing beyond a factor of about 16,
-  which is why the design stays small. Larger designs need a larger tile size.
+- Some extreme settings do not compile: at tile 16, a factor of 64 on every
+  unit fails in the estimator and 128 trips an assertion in HIDA's factor
+  distribution. The experiment skips factors that fail.
+
+To repeat it (needs only the compiler, about 40 minutes on 4 cores):
+
+```
+budget_experiment.py --mlir samples/pytorch/resnet18/resnet18.mlir \
+    --device tools/floorplan/devices/u280.json --out-dir runs/budget
+```
 
 Tests: `python3 tools/floorplan/test_budget.py`, and the lit tests
 `test/Transforms/Dataflow/parallelize-unit-factors.mlir` and

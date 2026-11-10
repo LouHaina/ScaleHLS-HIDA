@@ -251,10 +251,20 @@ struct ParallelizeDataflowNode
 
     // Optimize the unroll factors from the most critical node.
     llvm::SmallDenseMap<NodeOp, FactorList> nodeUnrollFactorsMap;
+    llvm::SmallDenseMap<NodeOp, unsigned> nodeVisitCount;
     while (!worklist.empty()) {
       auto current = worklist.pop_back_val();
       auto node = current.first;
       auto corrNum = current.second;
+
+      // Nodes sharing an external buffer must end up with identical factors,
+      // so a node is revisited whenever its neighbour got different ones. If
+      // the two sides have different parallel factors (which per-unit factors
+      // make common), redistributing each side in turn can alternate forever.
+      // After a few visits a node therefore adopts the factors required by
+      // its external-buffer neighbours instead of redistributing its own.
+      const unsigned maxRedistributions = 8;
+      bool adoptNeighbourFactors = ++nodeVisitCount[node] > maxRedistributions;
 
       // If the correlation list is empty, which means the correlation analysis
       // failed, skip the current node.
@@ -322,9 +332,13 @@ struct ParallelizeDataflowNode
       }
 
       // Distribute factor based on the constraints and record in the map.
-      if (failed(getEvenlyDistributedFactors(parallelFactor, factors, band,
-                                             corrFactorsList,
-                                             /*powerOf2Constr=*/true)))
+      // When adopting, "factors" already holds the element-wise maximum of
+      // the external-buffer neighbours' factors and is kept as is.
+      if (adoptNeighbourFactors && !candidatesToRevisit.empty()) {
+        LLVM_DEBUG(llvm::dbgs() << "Adopt neighbour factors\n");
+      } else if (failed(getEvenlyDistributedFactors(parallelFactor, factors,
+                                                    band, corrFactorsList,
+                                                    /*powerOf2Constr=*/true)))
         factors = getDistributedFactors(parallelFactor, band);
       nodeUnrollFactorsMap[node] = factors;
 

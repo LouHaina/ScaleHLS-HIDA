@@ -182,79 +182,105 @@ def slr_caps(dev, K, rho, rho_slr):
     if len(rhos) != K: raise SystemExit(f'--rho-slr needs {K} values')
     return [{r: dev['capacity_per_slr'].get(r, 0) * rhos[k] for r in RES} for k in range(K)], rhos
 
-def unit_samples(graphs, calibrations):
-    """unit -> [(factor, areas, latency)] over all graphs; also the unit order."""
-    samples = defaultdict(list); order = None
-    for gi, g in enumerate(graphs):
-        calib = calibrations[gi] if gi < len(calibrations) else None
-        units, _, areas = unit_graph(g, calib)
-        idx = {u: g['node_by_name'][u].get('unit_index', -1) for u in units if not u.startswith('__')}
-        if any(v < 0 for v in idx.values()):
-            raise SystemExit('graph has no unit_index: export it with a compiler that has the unit factor support')
-        this = [u for u, _ in sorted(idx.items(), key=lambda kv: kv[1])]
-        if order is None: order = this
-        elif this != order:
-            raise SystemExit('the graphs do not have the same units in the same order; they must come from the same model and options except the unroll factors')
-        for u in this:
-            n = g['node_by_name'][u]
-            if n.get('unroll', -1) <= 0:
-                raise SystemExit(f'unit {u} has no recorded unroll factor (set floorplan-graph-output on the pipeline so factors are recorded)')
-            samples[u].append((n['unroll'], areas[u], n.get('latency', 0)))
-    return samples, order
+def ordered_units(g):
+    """Unit names in compiler order (the order of floorplan-unit-factors)."""
+    us = [n for n in g['nodes'] if n.get('is_unit') and not n['name'].startswith('__')]
+    if any(n.get('unit_index', -1) < 0 for n in us):
+        raise SystemExit('graph has no unit_index: export it with a compiler that supports unit factors')
+    return [n['name'] for n in sorted(us, key=lambda n: n['unit_index'])]
+
+def graph_config(g, calib=None):
+    """One compiled design: unit -> (factor, areas, latency), in unit order."""
+    _, _, areas = unit_graph(g, calib)
+    out = {}
+    for u in ordered_units(g):
+        n = g['node_by_name'][u]
+        if n.get('unroll', -1) <= 0:
+            raise SystemExit(f'unit {u} has no recorded unroll factor (pass floorplan-graph-output to the pipeline so factors are recorded)')
+        out[u] = (n['unroll'], areas[u], n.get('latency', 0))
+    return out
+
+def cmd_sweep(a):
+    """Compile the design once per factor (all units at that factor) and once
+    per value of the plain HIDA knob, exporting a graph each time."""
+    os.makedirs(a.out_dir, exist_ok=True)
+    def compile_to(name, extra):
+        graph = os.path.join(a.out_dir, name)
+        run(a.compile.format(graph=graph, extra=extra))
+        return graph
+    knob = [int(v) for v in a.knob.split(',') if v]
+    factors = [int(v) for v in a.factors.split(',') if v]
+    knob_graphs = [compile_to(f'knob_{F}.json', f'loop-unroll-factor={F}') for F in knob]
+    n = len(ordered_units(load_graph(knob_graphs[0])))
+    unit_graphs = []
+    for f in factors:
+        uf = os.path.join(a.out_dir, f'all_{f}.factors.json')
+        json.dump({'unit_factors': [f] * n}, open(uf, 'w'))
+        unit_graphs.append(compile_to(f'all_{f}.json', f'loop-unroll-factor={knob[0]} floorplan-unit-factors={uf}'))
+    print(f'{n} units; {len(unit_graphs)} factor graphs and {len(knob_graphs)} knob graphs in {a.out_dir}')
+    print('next: floorplan.py budget ' + ' '.join(unit_graphs) + ' --baseline ' + ' '.join(knob_graphs) + ' --device <device.json>')
 
 def cmd_budget(a):
     import budget as bg
-    graphs = [load_graph(p) for p in a.graphs]
-    calibs = [json.load(open(p)) for p in (a.calibration or [])]
     dev = json.load(open(a.device)); K = a.slrs or dev['slrs']
     caps, rhos = slr_caps(dev, K, a.rho, a.rho_slr)
-    samples, order = unit_samples(graphs, calibs)
-    models, no_latency = bg.fit_models(samples)
+    graphs = [load_graph(p) for p in a.graphs]
+    baselines = [(p, load_graph(p)) for p in (a.baseline or [])]
+    order = ordered_units(graphs[0])
+    samples = defaultdict(list)
+    for g in graphs + [g for _, g in baselines]:
+        cfg = graph_config(g)
+        if list(cfg) != order:
+            raise SystemExit('the graphs do not have the same units in the same order; they must come from the same model and options except the unroll factors')
+        for u, v in cfg.items(): samples[u].append(v)
+    tables = bg.build_tables(samples)
     g = graphs[0]
-    units, edges, areas0 = unit_graph(g, calibs[0] if calibs else None)
-    fixed = {u: areas0[u] for u in units if u not in models}
-    base = {u: samples[u][0][0] for u in order}
-    cands = {}
-    for u in order:
-        hi = max(max(models[u]['points']) * a.max_scale, 1)
-        cands[u] = sorted(set(bg.candidate_factors(1, int(hi))) | set(models[u]['points']))
+    units, edges, areas0 = unit_graph(g)
+    fixed = {u: areas0[u] for u in units if u not in tables}
     anchors = {}
     axi_slr = dev.get('memory_anchors', {}).get('axi')
     if axi_slr is not None and '__mem__' in units: anchors['__mem__'] = axi_slr
     groups = [(e['src'], e['dst']) for e in edges if e['kind'] == 'buffer']
     prev = json.load(open(a.assignment))['assignment'] if a.assignment else None
     kw = dict(fixed=fixed, objective=a.objective, anchors=anchors, groups=groups, assignment=prev, time_limit=a.time_limit)
-    factors, assign, info = bg.solve_budget(units, models, edges, K, caps, candidates=cands, **kw)
+    # Solve a little below the budget: units that share an external buffer
+    # influence each other and HIDA's output varies slightly between runs, so the
+    # recompiled design is not exactly the sum of the measured units.
+    solve_caps = [{r: v * (1 - a.margin) for r, v in c.items()} for c in caps]
+    factors, assign, info = bg.solve_budget(units, tables, edges, K, solve_caps, **kw)
     if factors is None:
-        print('no factors fit the budget even at the smallest candidates:', info, file=sys.stderr); sys.exit(2)
-    # What the single HIDA knob reaches under the same budget, for comparison.
-    scales = sorted({c / 8 for c in bg.candidate_factors(1, int(8 * a.max_scale))})
-    us, uf, uasg = bg.best_uniform(units, models, edges, K, caps, base, scales, **kw)
-    lat = bg.total_latency(models, factors, a.objective)
-    print(f"budget solved {info['status']} in {info['seconds']}s, rho per SLR {rhos}, objective {a.objective}")
-    if no_latency:
-        print(f'note: {no_latency} units have no latency estimate; their share of the work is taken from the base factors')
-    if len(graphs) == 1:
-        print('note: one graph only, so area is assumed proportional to the factor (constant for BRAM/URAM); give graphs of two factors for a fitted model')
-    use = bg.usage(models, factors, assign, K, fixed)
+        print('no combination of the compiled factors fits the budget:', info, file=sys.stderr); sys.exit(2)
+    lsum, lmax = bg.latency(tables, factors)
+    use = bg.usage(tables, factors, assign, K, fixed)
+    print(f"budget solved {info['status']} in {info['seconds']}s; share of each SLR {rhos}; objective {a.objective}; "
+          f"candidates per unit {sorted(tables[order[0]])}")
     for k in range(K):
         pct = ', '.join(f"{r} {use[k][r]} ({100 * use[k][r] / caps[k][r] * rhos[k]:.0f}%)" for r in RES if caps[k].get(r, 0) > 0 and use[k][r])
         print(f"  SLR{k}: {sum(1 for u in factors if assign[u] == k)} units; {pct}")
-    print('  unit factors (base -> chosen): ' + ', '.join(f"{u.split('_')[-1]} {base[u]}->{factors[u]}" for u in order))
-    cmp = None
-    if uf is not None:
-        ulat = bg.total_latency(models, uf, a.objective)
-        cmp = dict(scale=us, latency=ulat, factors=[uf[u] for u in order])
-        print(f"  predicted latency: {lat:.4g} with per-unit factors, {ulat:.4g} with one common scale (x{us:g} of the base); ratio {ulat / lat:.2f}x")
-    else:
-        print('  one common scale does not fit the budget at any tried size; only per-unit factors do')
-    json.dump(dict(unit_factors=[factors[u] for u in order], units=order, base_factors=[base[u] for u in order],
-                   rho=rhos, objective=a.objective, predicted_latency=lat, uniform=cmp,
-                   predicted_usage=use), open(a.out_factors, 'w'), indent=1)
-    areas = {u: {r: int(round(v)) for r, v in bg.area_at(models[u], factors[u]).items()} for u in factors}
+    print('  unit factors: ' + ' '.join(str(factors[u]) for u in order))
+    print(f'  latency by the HIDA estimate: sum {lsum:.4g}, largest unit {lmax:.4g}')
+    # The plain HIDA knob under the same budget.
+    rows = []
+    for path, bgraph in baselines:
+        cfg = graph_config(bgraph)
+        ok = bg.fits(units, {u: (v[1], v[2]) for u, v in cfg.items()}, edges, K, caps, **kw) is not None
+        bs, bm = sum(v[2] for v in cfg.values()), max(v[2] for v in cfg.values())
+        tot = {r: int(sum(v[1].get(r, 0) for v in cfg.values())) for r in ('dsp', 'bram')}
+        rows.append(dict(graph=os.path.basename(path), fits=ok, latency_sum=bs, latency_max=bm, **tot))
+        print(f"  knob {os.path.basename(path)}: {'fits' if ok else 'does not fit'}; dsp {tot['dsp']}, bram {tot['bram']}; latency sum {bs:.4g}, largest unit {bm:.4g}")
+    key = 'latency_max' if a.objective == 'max' else 'latency_sum'
+    ok_rows = [r for r in rows if r['fits']]
+    if ok_rows:
+        best = min(ok_rows, key=lambda r: r[key]); mine = lmax if a.objective == 'max' else lsum
+        print(f"  best knob setting that fits: {best['graph']}; per-unit factors are {best[key] / mine:.2f}x faster by the estimate")
+    json.dump(dict(unit_factors=[factors[u] for u in order], units=order, rho=rhos, objective=a.objective,
+                   predicted_latency_sum=lsum, predicted_latency_max=lmax, predicted_usage=use, baselines=rows),
+              open(a.out_factors, 'w'), indent=1)
+    areas = {u: {r: int(round(v)) for r, v in bg.area_at(tables, u, factors[u]).items()} for u in factors}
     areas.update(fixed)
     out = assignment_record(g, dev, K, units, edges, areas, assign, a.slack)
     out['solver'] = info; out['unit_factors'] = {u: factors[u] for u in order}
+    out['predicted_latency'] = dict(sum=lsum, max=lmax)
     json.dump(out, open(a.out, 'w'), indent=1)
     print(f'wrote {a.out_factors} (for floorplan-unit-factors=) and {a.out}')
 
@@ -274,19 +300,26 @@ def cmd_budget_check(a):
         for r in RES:
             if caps[k].get(r, 0) <= 0 or not use[k][r]: continue
             bad = use[k][r] > caps[k][r]; over |= bad
-            parts.append(f"{r} {use[k][r]} / {int(caps[k][r])}{' OVER' if bad else ''}")
+            parts.append(f"{r} {use[k][r]} of {int(caps[k][r])}{' OVER' if bad else ''}")
         print(f"  SLR{k}: {', '.join(parts)}")
     want = asg.get('unit_factors', {}); pred = asg.get('areas', {})
-    rows = []
+    wrong, off = [], []
+    lats = []
     for u in units:
         n = g['node_by_name'][u]
-        if u in want and n.get('unroll', -1) != want[u]: rows.append(f"{u}: factor {n.get('unroll')} instead of {want[u]}")
+        if u.startswith('__'): continue
+        lats.append(n.get('latency', 0))
+        if u in want and n.get('unroll', -1) != want[u]: wrong.append(f"{u}: compiled with factor {n.get('unroll')} instead of {want[u]}")
         p, m = pred.get(u, {}).get(a.resource, 0), areas[u].get(a.resource, 0)
-        if p and abs(m - p) > a.tolerance * p: rows.append(f"{u}: {a.resource} {m} vs predicted {p}")
-    for r in rows: print('  ' + r)
-    print('budget exceeded: pass this graph to `budget` as another point and solve again' if over
-          else f'within budget; {len(rows)} units differ from the prediction by more than {a.tolerance:.0%}')
-    sys.exit(1 if over else 0)
+        if p and abs(m - p) > a.tolerance * p: off.append(f"{u}: {a.resource} {m}, expected {p}")
+    for r in wrong + off: print('  ' + r)
+    pl = asg.get('predicted_latency')
+    if lats and pl:
+        print(f"  latency by the HIDA estimate: sum {sum(lats):.4g} (expected {pl['sum']:.4g}), largest unit {max(lats):.4g} (expected {pl['max']:.4g})")
+    if wrong: print('the graph was not compiled with the chosen factors')
+    print('budget exceeded: lower --rho (or --rho-slr for that SLR) and solve again' if over
+          else f'within budget; {len(off)} units differ from the expected {a.resource} by more than {a.tolerance:.0%}')
+    sys.exit(1 if over or wrong else 0)
 
 # ----------------------------------------------------------------------------
 # emit
@@ -459,14 +492,19 @@ def main():
     e.add_argument('--out-manifest', default='manifest.json'); e.add_argument('--soft', action='store_true'); e.set_defaults(fn=cmd_emit)
     c = sub.add_parser('calibrate'); c.add_argument('graph'); c.add_argument('--hls-dir', default='.'); c.add_argument('--report'); c.add_argument('--out', default='calibration.json'); c.set_defaults(fn=cmd_calibrate)
     l = sub.add_parser('loop'); l.add_argument('config'); l.set_defaults(fn=cmd_loop)
+    w = sub.add_parser('sweep', help='compile the design at several unroll factors and export a graph each time')
+    w.add_argument('--compile', required=True, help='compile command with {extra} inside the pipeline options and {graph} as floorplan-graph-output')
+    w.add_argument('--factors', default='1,2,4,8,16,32', help='factors given to all units at once')
+    w.add_argument('--knob', default='2,8,32,64', help='values of the plain loop-unroll-factor, for comparison')
+    w.add_argument('--out-dir', default='sweep'); w.set_defaults(fn=cmd_sweep)
     b = sub.add_parser('budget', help='per-unit unroll factors under a per-SLR resource budget')
-    b.add_argument('graphs', nargs='+', help='graph.json of the same design at one or more unroll factors; the first is the base')
+    b.add_argument('graphs', nargs='+', help='graphs of the same design compiled at different unit factors (from sweep)')
+    b.add_argument('--baseline', nargs='+', help='graphs compiled with the plain loop-unroll-factor knob, for comparison')
     b.add_argument('--device', required=True); b.add_argument('--slrs', type=int, default=0)
     b.add_argument('--rho', type=float, default=0.6, help='share of each SLR that may be used')
     b.add_argument('--rho-slr', help='one share per SLR, e.g. 0.6,0.5,0.6 (lower the SLR that was congested)')
-    b.add_argument('--objective', choices=['sum', 'max'], default='sum', help='sum: latency of one frame; max: slowest unit')
-    b.add_argument('--max-scale', type=float, default=4.0, help='largest factor tried, relative to the largest compiled one')
-    b.add_argument('--calibration', nargs='+', help='calibration.json per graph, in the same order')
+    b.add_argument('--margin', type=float, default=0.05, help='part of the budget kept free for differences between the measured units and the recompiled design')
+    b.add_argument('--objective', choices=['sum', 'max'], default='sum', help='sum of the unit latencies, or the largest one')
     b.add_argument('--assignment', help='keep the SLR assignment of this file and only choose factors')
     b.add_argument('--slack', type=int, default=2); b.add_argument('--time-limit', type=float, default=60)
     b.add_argument('--out', default='assignment.json'); b.add_argument('--out-factors', default='unit_factors.json')

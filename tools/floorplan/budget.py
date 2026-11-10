@@ -7,7 +7,7 @@ share (rho) of its resources:
 
   x[u,c]  one-hot: unit u uses candidate factor c
   y[u,k]  one-hot: unit u is placed in SLR k
-  min     sum_u latency_u(c)            (or max_u, see objective)
+  min     max_u latency_u(c)            (the slowest unit; or sum_u, see objective)
           then, within 1% of that latency, the smallest area,
           then, within 1% of that area, the smallest cut
   s.t.    sum_u area_u^r(c) * [u in k] <= rho_k * capacity_k^r   for all k, r
@@ -53,7 +53,7 @@ def latency_at(tables, u, f):
     return tables[u][f][1]
 
 
-def solve_budget(units, tables, edges, K, caps, *, fixed=None, objective='sum', anchors=None,
+def solve_budget(units, tables, edges, K, caps, *, fixed=None, objective='max', anchors=None,
                  groups=None, assignment=None, tolerance=0.01, time_limit=60.0, workers=4):
     """caps: list (per SLR) of {res: cap}. fixed: unit -> areas of units without
     a table (e.g. the memory pseudo-node). assignment: unit -> SLR to keep the

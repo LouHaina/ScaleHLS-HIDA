@@ -28,13 +28,13 @@ def test_budget_respects_each_slr():
     assert factors is not None, info
     use = bg.usage(tables, factors, assign, 2)
     assert use[0]['dsp'] <= 400 and use[1]['dsp'] <= 200
-    assert use[0]['dsp'] + use[1]['dsp'] > 300                 # and the budget is actually used
+    assert max(factors.values()) > 1                           # and the budget is actually used
 
 
 def test_heavy_unit_gets_the_resources():
     spec = {'heavy': (50, 10000.0), 'l1': (50, 100.0), 'l2': (50, 100.0)}
     tables = tables_for(spec); units = list(spec)
-    factors, _, _ = bg.solve_budget(units, tables, [], 1, [{'dsp': 600}])
+    factors, _, _ = bg.solve_budget(units, tables, [], 1, [{'dsp': 600}], objective='sum')
     assert factors['heavy'] > factors['l1'] and factors['heavy'] > factors['l2']
     same = {u: 4 for u in units}                               # 3 * 200 dsp: the largest common factor that fits
     assert bg.latency(tables, factors)[0] < bg.latency(tables, same)[0]
@@ -45,7 +45,7 @@ def test_factor_that_does_not_help_is_not_chosen():
     samples = {'flat': [(f, {'dsp': 10 * f}, 500.0) for f in (1, 2, 4, 8)],
                'good': [(f, {'dsp': 10 * f}, 800.0 / f) for f in (1, 2, 4, 8)]}
     tables = bg.build_tables(samples)
-    factors, _, _ = bg.solve_budget(['flat', 'good'], tables, [], 1, [{'dsp': 1000}])
+    factors, _, _ = bg.solve_budget(['flat', 'good'], tables, [], 1, [{'dsp': 1000}], objective='sum')
     assert factors == {'flat': 1, 'good': 8}
 
 

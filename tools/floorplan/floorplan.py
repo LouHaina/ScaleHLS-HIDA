@@ -534,7 +534,8 @@ def main():
     b.add_argument('--margin', type=float, default=0.05, help='part of the budget kept free for differences between the measured units and the recompiled design')
     b.add_argument('--compile', help='compile command as for sweep; the chosen design is compiled and the choice repeated until it is within budget')
     b.add_argument('--max-rounds', type=int, default=5)
-    b.add_argument('--objective', choices=['sum', 'max'], default='sum', help='sum of the unit latencies, or the largest one')
+    b.add_argument('--objective', choices=['max', 'sum'], default='max',
+                   help='max: the slowest unit, which sets the frame time when the top level runs all units together (default); sum: all unit latencies added')
     b.add_argument('--assignment', help='keep the SLR assignment of this file and only choose factors')
     b.add_argument('--slack', type=int, default=2); b.add_argument('--time-limit', type=float, default=60)
     b.add_argument('--out', default='assignment.json'); b.add_argument('--out-factors', default='unit_factors.json')

@@ -3,7 +3,11 @@
 Model (docs/FloorplanAwareHIDA-Design.md, section 6):
   y[v,k]   one-hot SLR of node v;  p[v] = sum k*y[v,k]
   d[e]     = |p[src] - p[dst]|  boundaries crossed by edge e
-  min  sum_e w_e*d_e + alpha*sum_e pen_e*d_e + beta*imbalance
+  min  sum_e w_e*d_e + alpha*sum_e pen_e*d_e + beta*imbalance_pct
+       (imbalance_pct = (max_k - min_k) of the balance resource as a
+        percentage of the design total, so beta is "weighted wire bits per
+        percent of imbalance". beta defaults to 0: capacity is a constraint,
+        not a goal, and a design that fits in one SLR stays in one SLR.)
   s.t. capacity per SLR and resource, SLL budget per boundary, anchors,
        grouping, adjacency (d_e <= 1 for stream/token edges), cycle budget,
        locks from a previous iteration.
@@ -11,11 +15,11 @@ Model (docs/FloorplanAwareHIDA-Design.md, section 6):
 import time
 from collections import defaultdict
 
-KIND_W = {'stream': 1.0, 'buffer': 4.0, 'token': 0.1, 'port': 1.0, 'dram': 0.5, 'axi': 0.0, 'other': 1.0}
+KIND_W = {'stream': 1.0, 'buffer': 4.0, 'token': 0.1, 'port': 1.0, 'dram': 0.5, 'axi': 0.0, 'ctrl': 1.0, 'other': 1.0}
 RES = ('lut', 'ff', 'dsp', 'bram', 'uram')
 
 
-def solve(nodes, edges, areas, K, cap, sll_cap, *, alpha=1.0, beta=1.0, penalties=None,
+def solve(nodes, edges, areas, K, cap, sll_cap, *, alpha=1.0, beta=0.0, penalties=None,
           anchors=None, groups=None, locks=None, cycles=None, adjacency=True,
           time_limit=60.0, workers=4):
     """nodes: list of names; edges: list of dict(src,dst,width,kind[,id]);
@@ -74,7 +78,12 @@ def solve(nodes, edges, areas, K, cap, sll_cap, *, alpha=1.0, beta=1.0, penaltie
             for k in range(K):
                 s = sum(int(areas[n].get(bal_res, 0)) * y[n, k] for n in nodes)
                 m.Add(mx >= s); m.Add(mn <= s)
-            obj = obj + int(round(beta * 10)) * (mx - mn)
+            # Normalize to percent of the design total. The raw difference is
+            # in LUTs/DSPs (thousands) while cut costs are in wire bits, so an
+            # unnormalized term always wins and spreads the design evenly.
+            imb = m.NewIntVar(0, 100, 'imbalance_pct')
+            m.Add(imb * tot >= (mx - mn) * 100)
+            obj = obj + int(round(beta * 10)) * imb
     m.Minimize(obj)
     s = cp_model.CpSolver()
     s.parameters.max_time_in_seconds = time_limit

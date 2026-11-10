@@ -115,7 +115,7 @@ Edge weight used by the solver: `w_e = bits_e * k_kind`, with `k_stream = 1`, `k
 
 Variables: `y_{v,k}` binary, one-hot per node; integer `p_v = sum_k k*y_{v,k}`; `d_e >= p_src - p_dst`, `d_e >= p_dst - p_src` (number of boundaries crossed by edge e); `c_{e,b}` binary = edge e crosses boundary b (linearized as in AutoBridge's `ILPUtilities.py`).
 
-Objective: minimize `sum_e w_e * d_e  +  alpha * sum_e pen_e * d_e  +  beta * imbalance`, where `pen_e` is the timing penalty learned from feedback (Section 8) and imbalance is `max_r (max_k U_k^r - min_k U_k^r)` over normalized utilizations (linearized with auxiliary variables).
+Objective: minimize `sum_e w_e * d_e  +  alpha * sum_e pen_e * d_e  +  beta * imbalance`, where `pen_e` is the timing penalty learned from feedback (Section 8) and imbalance is `max_r (max_k U_k^r - min_k U_k^r)` over normalized utilizations (linearized with auxiliary variables). `beta` defaults to 0: capacity is a constraint, and balance is not a goal in itself, because spreading a design that fits in one SLR only adds crossings. When used, the imbalance is expressed in percent of the design total so that it is comparable with wire bits.
 
 Constraints:
 

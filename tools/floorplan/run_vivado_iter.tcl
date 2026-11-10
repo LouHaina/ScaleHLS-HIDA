@@ -1,15 +1,21 @@
-# One P&R iteration for the floorplan loop. Run with:
-#   vivado -mode batch -source run_vivado_iter.tcl -tclargs <in.dcp> <floorplan.tcl> <period_ns> <out_dir> [<prev_routed.dcp>]
+# One P&R run for the floorplan loop and for the evaluation sweep. Run with:
+#   vivado -mode batch -source run_vivado_iter.tcl -tclargs <in.dcp> <floorplan.tcl|none> <period_ns> <out_dir> [<prev_routed.dcp|none>] [<place directive>]
+# "none" as the floorplan runs the unconstrained baseline through the very same
+# steps, so every arm of a comparison differs only in its constraints.
 # Writes machine-readable reports that tools/floorplan/parse_reports.py understands.
 set in_dcp     [lindex $argv 0]
 set fp_tcl     [lindex $argv 1]
 set period     [lindex $argv 2]
 set out_dir    [lindex $argv 3]
 set prev_dcp   [expr {[llength $argv] > 4 ? [lindex $argv 4] : ""}]
+set directive  [expr {[llength $argv] > 5 ? [lindex $argv 5] : "Default"}]
+if {$prev_dcp eq "none"} { set prev_dcp "" }
 file mkdir $out_dir
 
+proc fp_status {dir text} { set f [open $dir/status.txt w]; puts $f $text; close $f }
+
 open_checkpoint $in_dcp
-source $fp_tcl
+if {$fp_tcl ne "" && $fp_tcl ne "none"} { source $fp_tcl }
 create_clock -period $period [get_ports ap_clk]
 set_clock_uncertainty 0.2 [get_clocks ap_clk]
 
@@ -17,10 +23,13 @@ if {$prev_dcp ne "" && [file exists $prev_dcp]} {
     # Reuse the previous iteration's placement for unchanged cells.
     read_checkpoint -incremental $prev_dcp
 }
-opt_design
-place_design
-phys_opt_design
-route_design
+# A run that cannot be placed or routed is a result, not a crash: record it.
+if {[catch { opt_design; place_design -directive $directive; phys_opt_design } msg]} {
+    fp_status $out_dir "place_failed $msg"; exit
+}
+if {[catch { route_design } msg]} {
+    fp_status $out_dir "route_failed $msg"; exit
+}
 
 write_checkpoint -force $out_dir/post_route.dcp
 report_utilization -slr -file $out_dir/utilization_slr.rpt
@@ -41,5 +50,6 @@ foreach p [get_timing_paths -inter_slr data_crossing -setup -max_paths 500 -nwor
     puts $f "$s,$sp,$ep"
 }
 close $f
+fp_status $out_dir "done period=$period directive=$directive"
 puts "ITERATION_DONE $out_dir WNS=[get_property SLACK [get_timing_paths -max_paths 1 -setup]]"
 exit

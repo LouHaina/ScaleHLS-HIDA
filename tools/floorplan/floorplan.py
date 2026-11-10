@@ -97,25 +97,56 @@ def cmd_solve(a):
     if axi_slr is not None and '__mem__' in units:
         anchors['__mem__'] = axi_slr   # memory subsystem pseudo-node; AXI edges pull units toward it
     groups = [(e['src'], e['dst']) for e in edges if e['kind'] == 'buffer' and not a.allow_buffer_cut]
-    penalties, locks = {}, {}
+    cycles = find_cycles(units, edges)   # before feedback adds control edges
+    penalties, locks, fb_groups, ctrl_added = {}, {}, [], []
     if a.feedback:
-        fb = json.load(open(a.feedback))
         prev = json.load(open(a.prev)) if a.prev else {}
         prev_assign = prev.get('assignment', {})
-        failing = fb.get('failing_node_pairs', {})
+        # Accumulate over every iteration so far: a pair that failed once keeps
+        # its penalty, otherwise the solver can move it straight back.
+        pen = defaultdict(float); times = defaultdict(int)
+        for path in a.feedback:
+            for pair, info in json.load(open(path)).get('failing_node_pairs', {}).items():
+                s, d = pair.split('->')
+                if s not in areas or d not in areas or s == d: continue
+                key = tuple(sorted((s, d)))
+                pen[key] += a.lam * abs(info['worst_slack']) * 1000; times[key] += 1
         implicated = set()
-        for pair, info in failing.items():
-            s, d = pair.split('->')
+        for (s, d), p in pen.items():
             implicated.update((s, d))
-            for i, e in enumerate(edges):
-                if {e['src'], e['dst']} == {s, d}:
-                    penalties[i] = penalties.get(i, 0) + a.lam * abs(info['worst_slack']) * 1000
+            ids = [i for i, e in enumerate(edges) if {e['src'], e['dst']} == {s, d}]
+            if not ids:
+                # The failing path is a control handshake (ap_done/ap_sync through
+                # the top FSM) that the dataflow graph does not contain. Without
+                # an edge the penalty would be dropped and nothing would change.
+                edges.append(dict(src=s, dst=d, width=1, kind='ctrl', channel='', depth=1))
+                ids = [len(edges) - 1]; ctrl_added.append(f'{s}<->{d}')
+            penalties[ids[0]] = penalties.get(ids[0], 0) + p
+            if a.group_after and times[(s, d)] >= a.group_after: fb_groups.append((s, d))
         for u in units:
             if u in prev_assign and u not in implicated and a.lock: locks[u] = prev_assign[u]
-    assign, info = ilp.solve(units, edges, areas, K, cap, dev['sll_per_boundary'] * a.sll_ratio,
+        print(f'feedback: {len(pen)} failing unit pairs, {len(ctrl_added)} control edges added, '
+              f'{len(fb_groups)} pairs grouped, {len(locks)} units locked')
+    # Relax in order: locks keep incremental P&R reuse high, but they must not
+    # stop a failing pair from being brought together. Take the first attempt
+    # that leaves no penalized edge cut, else the one that cuts the fewest.
+    attempts = [('as requested', locks, groups + fb_groups)]
+    if locks: attempts.append(('without locks', {}, groups + fb_groups))
+    if fb_groups: attempts.append(('without locks and feedback groups', {}, groups))
+    assign, info, best_cut = None, None, None
+    for label, lk, gr in attempts:
+        asg, inf = ilp.solve(units, edges, areas, K, cap, dev['sll_per_boundary'] * a.sll_ratio,
                              alpha=1.0, beta=a.beta, penalties=penalties, anchors=anchors,
-                             groups=groups, locks=locks, cycles=find_cycles(units, edges),
-                             time_limit=a.time_limit)
+                             groups=gr, locks=lk, cycles=cycles, time_limit=a.time_limit)
+        if asg is None:
+            if info is None: info = inf
+            continue
+        still_cut = sum(1 for i in penalties if asg[edges[i]['src']] != asg[edges[i]['dst']])
+        if best_cut is None or still_cut < best_cut:
+            assign, info, best_cut = asg, inf, still_cut
+            if label != 'as requested': print(f'note: solved {label}')
+        if still_cut == 0: break
+    if best_cut: print(f'warning: {best_cut} failing unit pairs are still split across SLRs (capacity or anchors prevent co-location)')
     if assign is None:
         print('ILP infeasible:', info, file=sys.stderr); sys.exit(2)
     full = dict(assign)
@@ -258,14 +289,14 @@ def cmd_loop(a):
     hls (template with {cpp} {hls_dir}), vivado (template with {dcp} {tcl} {period} {out} {prev}), python."""
     cfg = json.load(open(a.config)); wd = cfg['workdir']; os.makedirs(wd, exist_ok=True)
     here = os.path.dirname(os.path.abspath(__file__)); py = cfg.get('python', sys.executable)
-    best = None; prev_assign = None; feedback = None; calib = None
+    best = None; prev_assign = None; feedback = None; calib = None; feedbacks = []
     for it in range(cfg.get('iters', 4)):
         d = os.path.join(wd, f'iter_{it}'); os.makedirs(d, exist_ok=True)
         graph = os.path.join(d, 'graph.json'); asg = os.path.join(d, 'assignment.json'); cpp = os.path.join(d, 'design.cpp')
         # 1. export graph (first compile, no assignment)
         run(cfg['compile'].format(graph=graph, assignment='', cpp=os.path.join(d, 'design_nofp.cpp')))
         # 2. solve
-        extra = f' --feedback {feedback} --prev {prev_assign}' if feedback and prev_assign else ''
+        extra = f' --feedback {" ".join(feedbacks)} --prev {prev_assign}' if feedbacks and prev_assign else ''
         extra += f' --calibration {calib}' if calib else ''
         run(f"{py} {here}/floorplan.py solve {graph} --device {cfg['device']} --slrs {cfg.get('slrs', 0)} --out {asg}{extra}")
         # 3. compile again with the assignment, then emit constraints
@@ -288,6 +319,7 @@ def cmd_loop(a):
         # 5. feedback
         feedback = os.path.join(d, 'feedback.json')
         run(f"{py} {here}/parse_reports.py {out} --out {feedback}")
+        feedbacks.append(feedback)
         fb = json.load(open(feedback)); wns = fb.get('timing', {}).get('wns')
         print(f'### iteration {it}: WNS={wns} failing pairs={list(fb.get("failing_node_pairs", {}))[:5]}')
         if best is None or (wns is not None and wns > best[1]): best = (it, wns)
@@ -300,8 +332,9 @@ def main():
     sub = ap.add_subparsers(dest='cmd', required=True)
     s = sub.add_parser('solve'); s.add_argument('graph'); s.add_argument('--device', required=True); s.add_argument('--slrs', type=int, default=0)
     s.add_argument('--out', default='assignment.json'); s.add_argument('--rho', type=float, default=0.7); s.add_argument('--balance', type=float, default=None)
-    s.add_argument('--sll-ratio', type=float, default=0.5); s.add_argument('--beta', type=float, default=1.0); s.add_argument('--slack', type=int, default=2)
-    s.add_argument('--allow-buffer-cut', action='store_true'); s.add_argument('--calibration'); s.add_argument('--feedback'); s.add_argument('--prev')
+    s.add_argument('--sll-ratio', type=float, default=0.5); s.add_argument('--beta', type=float, default=0.0, help='cost per percent of imbalance; 0 = cut only'); s.add_argument('--slack', type=int, default=2)
+    s.add_argument('--allow-buffer-cut', action='store_true'); s.add_argument('--calibration'); s.add_argument('--feedback', nargs='+', help='feedback.json of every earlier iteration'); s.add_argument('--prev')
+    s.add_argument('--group-after', type=int, default=2, help='force a unit pair into one SLR after it failed this many iterations (0 = never)')
     s.add_argument('--lam', type=float, default=1.0); s.add_argument('--lock', action='store_true', default=True); s.add_argument('--time-limit', type=float, default=60)
     s.set_defaults(fn=cmd_solve)
     e = sub.add_parser('emit'); e.add_argument('assignment'); e.add_argument('--device', required=True); e.add_argument('--out-tcl', default='floorplan.tcl')

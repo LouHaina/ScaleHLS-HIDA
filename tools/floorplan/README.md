@@ -142,3 +142,51 @@ floorplan.py emit assignment.json --device devices/u280.json --out-tcl floorplan
 `calibrate`, `loop`, `hls_csynth.tcl` and `run_vivado_iter.tcl` need Vitis HLS
 and Vivado and are untested here. The ILP balances on DSP until `calibrate`
 supplies LUT/FF numbers, because HIDA's estimator reports LUT = 0.
+
+### Objective: cut first, balance only on request
+
+`solve` minimizes the weighted cut subject to the per-SLR capacity
+(`--rho`, default 0.7). Balance is no longer part of the default objective:
+`--beta` (default 0) is the cost of one percent of imbalance in units of
+weighted wire bits. The earlier unnormalized term compared LUT counts with
+wire bits, always won, and spread even a design that fits in a tenth of one
+SLR over all of them, which can only add crossing delay. With the default, a
+small design stays in one SLR and the result equals the baseline; the
+floorplan only starts cutting when capacity forces it. `--balance X` still
+caps every SLR at `(1 + X) / K` of the design and is meant for the forced
+spread experiment, not for normal runs.
+
+### Feedback
+
+`solve --feedback fb0.json fb1.json ... --prev assignment.json` takes the
+feedback of every earlier iteration, so penalties accumulate. A failing unit
+pair that has no edge in the dataflow graph (the control handshake through the
+top FSM: `ap_done`, `ap_sync_reg_*`, `loop_dataflow_output_count`) gets a
+`ctrl` edge so the penalty has something to act on. A pair that failed in
+`--group-after` iterations (default 2) is forced into one SLR. If the locks of
+unaffected units keep a failing pair apart, the solve is repeated without
+locks. Moving units only helps while co-location is possible; crossings that
+must remain need registers (design document, section 6.3).
+
+## Evaluation against the unconstrained baseline
+
+`eval_sweep.py` runs every arm through the same Tcl, clock period and placer
+directives and compares medians:
+
+```
+eval_sweep.py run       eval_config.example.json     (skips finished runs)
+eval_sweep.py summarize eval_config.example.json     (table + <out>/summary.csv)
+eval_sweep.py summarize --dirs data/run_0_2 data/run_0_2_1 --period 8.0
+```
+
+Arms: `baseline` (plain checkpoint, no constraints), `pipeline_only`
+(floorplan checkpoint, no constraints), `floorplan_only` (plain checkpoint,
+constraints), `full`. `run_vivado_iter.tcl` takes `none` as the constraint
+file for the unconstrained arms and a place directive as sixth argument, and
+writes `status.txt` so that placement and routing failures are counted instead
+of lost. Fmax is `1000 / (period - WNS)` post-route; failed runs are listed
+separately and never averaged in as 0 MHz. Use one config per design size and
+sweep the size (tile and unroll factors) from about 10 to 70 percent of the
+device: published gains (AutoBridge, PASTA) appear only for large designs and
+are about zero for small ones. `summarize` is tested on the reports under
+`data/`; `run` needs Vivado and is untested here.

@@ -1,0 +1,13 @@
+{
+  "design": "resnet18_tile8_unroll8",
+  "period": 4.0,
+  "out": "eval/resnet18_tile8_unroll8",
+  "directives": ["Default", "Explore", "ExtraTimingOpt"],
+  "vivado": "vivado -mode batch -source tools/floorplan/run_vivado_iter.tcl -tclargs {dcp} {tcl} {period} {out} none {directive}",
+  "arms": {
+    "baseline":       {"dcp": "runs/resnet18_u280/nofp/hls/post_synth.dcp",   "tcl": "none"},
+    "pipeline_only":  {"dcp": "runs/resnet18_u280/iter_0/hls/post_synth.dcp", "tcl": "none"},
+    "floorplan_only": {"dcp": "runs/resnet18_u280/nofp/hls/post_synth.dcp",   "tcl": "runs/resnet18_u280/iter_0/floorplan.tcl"},
+    "full":           {"dcp": "runs/resnet18_u280/iter_0/hls/post_synth.dcp", "tcl": "runs/resnet18_u280/iter_0/floorplan.tcl"}
+  }
+}

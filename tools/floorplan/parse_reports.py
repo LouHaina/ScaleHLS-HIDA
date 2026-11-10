@@ -105,6 +105,9 @@ def main():
         k = f"{r['src_node']}->{r['dst_node']}"
         pairs[k]['count'] += 1; pairs[k]['worst_slack'] = min(pairs[k]['worst_slack'], r['slack'])
     fb['failing_node_pairs'] = dict(sorted(pairs.items(), key=lambda kv: kv[1]['worst_slack']))
+    # Failing paths with an end outside every unit (top FSM, ap_sync registers):
+    # they cannot be fixed by moving one pair, so they are only counted.
+    fb['unmapped_failing_paths'] = sum(1 for r in paths if r['slack'] < 0 and not (r['src_node'] and r['dst_node']))
     fb['internal_failing_nodes'] = sorted({r['src_node'] for r in paths
                                            if r['slack'] < 0 and r['src_node'] and r['src_node'] == r['dst_node']})
     js = json.dumps(fb, indent=1)

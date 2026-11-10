@@ -108,9 +108,12 @@ OPTS="top-func=forward loop-tile-size=4 loop-unroll-factor=2"     # scale these 
 scalehls-opt samples/pytorch/resnet18/resnet18.mlir \
     -hida-pytorch-pipeline="$OPTS floorplan-graph-output=/mnt/c/hida/runs/r0/graph.json" > /dev/null
 
-# 5b. solve the SLR assignment (3 SLRs on U280)
+# 5b. solve the SLR assignment (3 SLRs on U280). The solver minimizes the cut
+#     under the per-SLR capacity, so a design this small stays in one SLR. Add
+#     --balance 0.3 only to force a spread for an experiment: on a small design
+#     that can only be slower than the unconstrained baseline.
 python3 tools/floorplan/floorplan.py solve /mnt/c/hida/runs/r0/graph.json \
-    --device tools/floorplan/devices/u280.json --balance 0.3 --out /mnt/c/hida/runs/r0/assignment.json
+    --device tools/floorplan/devices/u280.json --out /mnt/c/hida/runs/r0/assignment.json
 
 # 5c. compile again with the assignment and emit the C++
 scalehls-opt samples/pytorch/resnet18/resnet18.mlir \

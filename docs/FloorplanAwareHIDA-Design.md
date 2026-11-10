@@ -200,15 +200,55 @@ Gap: none of the above feeds Vivado per-SLR utilization, SLL usage and failing-c
 
 ## 10. Evaluation plan
 
-Devices: pick one and keep it: U280 (xcvu37p, 3 SLRs, HBM in SLR0) or U250 (xcu250, 4 SLRs, DDR per SLR). The repo currently mixes the two.
+### 10.1 Claim
 
-Benchmarks: ResNet18, VGG16, MobileNet, YOLO from `samples/pytorch` at unroll/tile settings that reach 40 to 70 percent of the device; plus one or two PolyBench kernels compiled through the C++ front-end to show generality.
+The claim to test is: with SLR-aware compilation, HIDA builds larger designs that deliver more frames per second than HIDA without it. The claim is not "a higher clock frequency for the same design". Published work does not show that for floorplanning alone:
 
-Baselines: (B0) vanilla HIDA, no constraints; (B1) HIDA + Vivado `SSI_*` placer directives only; (B2) HIDA + `USER_SLR_ASSIGNMENT` from the ILP, no crossing treatment; (B3) full C++ tier; (B4) plus RTL relay tier; (B5) iterations 1..N. If feasible, (B6) the same model expressed in TAPA with AutoBridge for an external reference.
+- AutoBridge and TAPA raise frequency by floorplanning together with pipelining of the crossing wires; AutoBridge states that the floorplan without pipelining degrades frequency.
+- Prometheus (2025) reports no frequency gain from using three SLRs instead of one (3mm 220 to 207 MHz, Atax 184 to 137 MHz, Bicg 220 to 177 MHz at a 220 MHz target). Its gain is throughput from a larger design (2mm 65 to 126 GF/s, 3mm 52 to 134 GF/s).
+- FADO notes that a FIFO link can be pipelined and a RAM link cannot, so functions that share a RAM stay in one slot. HIDA units share memory, so this limit applies here.
 
-Metrics: achieved Fmax (binary search on period, median of 3 directives), WNS at a fixed period, SLL usage per boundary, number of crossing nets, per-SLR utilization imbalance, throughput (frames/s = Fmax / II), compile time per iteration, and the number of iterations to closure.
+### 10.2 Size sweep
 
-Expected outcome: B0 fails or drops sharply in Fmax once the design spans SLRs; B2 alone may not help (the current data shows exactly that); B3 plus calibration should give most of the gain; B4 recovers the rest; iterations should mainly reduce variance and fix a few bad pairs.
+Each model is compiled at four or five sizes, from about 10 to 70 percent of the device, by changing the tile and unroll factors. Every point is reported, including the small ones where no gain is expected (AutoBridge reports 265 to 267 MHz on its smallest design, PASTA 0 to 3 percent). ResNet18 is the main model; a second model from `samples/pytorch` is added if time allows.
+
+The first experiment is the baseline alone over the whole sweep. It shows at which size plain HIDA starts to fail or lose frequency. That point is where the method has room to win; if the baseline is still healthy at 60 to 70 percent, the floorplan has little to add for that model.
+
+### 10.3 Arms
+
+| Arm | Checkpoint | Constraints | Shows |
+|---|---|---|---|
+| baseline | plain HIDA | none | the reference |
+| pipeline_only | with crossing registers | none | gain from registers alone |
+| floorplan_only | plain HIDA | floorplan | gain from placement rules alone |
+| full | with crossing registers | floorplan | the method |
+
+The reference is always the unmodified HIDA output, not the pipelined design without constraints. `tools/floorplan/eval_sweep.py` runs these arms with one config per size.
+
+### 10.4 Numbers reported for every run
+
+1. Build result: placed and routed, or the stage that failed. Failed runs are listed and never averaged in as 0 MHz.
+2. Fmax after routing, `1000 / (period - WNS)`.
+3. Cycles per frame from RTL simulation, because added registers and larger designs change the cycle count.
+4. Frames per second, `Fmax / cycles per frame`. This is the main result.
+5. LUT, FF, DSP and BRAM use, to show what the gain costs.
+
+For the floorplan itself, also the number of SLR-crossing nets and the utilization of each SLR.
+
+### 10.5 Fairness and noise
+
+- Same device, clock target, tool version, script and thread count for every arm.
+- Each point is run with three placer directives and the median is reported with the minimum and maximum. The existing runs move by several tenths of a nanosecond on near-identical constraints, so a single run is not evidence. Most published work omits this step.
+- Floorplans are produced without looking at the routed result of the baseline.
+
+### 10.6 Feedback loop
+
+For one or two large design points, frames per second and WNS are plotted after each iteration of the loop, next to the baseline of the same size. This is the part that is new compared with the published work, so it is shown on its own.
+
+### 10.7 Limits to state
+
+- Runs are out of context and, on the 16 GB machine, confined to a strip of clock-region columns. There are no fixed pin or memory-controller locations, which on a real board pull an unconstrained design toward them, so this setup favours the baseline.
+- If a larger machine or a board is available, one or two full-device runs are used to confirm the trend of the strip runs.
 
 ## 11. Work plan
 

@@ -5,6 +5,8 @@
 #          in every SLR (emulates a smaller multi-SLR device so a mid-size design
 #          has to cross SLRs).  With fp=none the whole design goes into one strip
 #          pblock; floorplan Tcl files are expected to use the same columns.
+# never truncate collections converted to Tcl lists
+set_param tcl.collectionResultDisplayLimit 0
 lassign $argv cfg fp_tcl directive out_dir stage strip
 if {$stage eq ""} { set stage route }
 if {$strip eq ""} { set strip full }

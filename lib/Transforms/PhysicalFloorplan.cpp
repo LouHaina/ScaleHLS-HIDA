@@ -723,7 +723,10 @@ struct PhysicalFloorplanPass
       for (int n : members) {
         const FpNode &N = nodes[n];
         if (N.kind == "top") {
-          os << "lappend cells {*}[get_cells -filter {IS_PRIMITIVE==1}]\n";
+          // add the collection directly: converting it to a Tcl list is
+          // truncated by Vivado (tcl.collectionResultDisplayLimit, 500)
+          os << "add_cells_to_pblock " << pb
+             << " [get_cells -filter {IS_PRIMITIVE==1}]\n";
           continue;
         }
         if (!N.cell.empty())

@@ -245,7 +245,9 @@ def emit_tcl(asg, path, contain_routing, crs_all=None, band_rows=2):
               f'set_property SNAPPING_MODE ON [get_pblocks {pb}]', 'set cells [list]']
         for n in sorted(ns):
             if n == 'top':
-                L.append('lappend cells {*}[get_cells -filter {IS_PRIMITIVE==1}]')
+                # add the collection directly: converting it to a Tcl list is
+                # truncated by Vivado (tcl.collectionResultDisplayLimit, 500)
+                L.append(f'add_cells_to_pblock {pb} [get_cells -filter {{IS_PRIMITIVE==1}}]')
                 continue
             L += [f'set c [get_cells -quiet {{{n}}}]',
                   f'if {{[llength $c] != 1}} {{ error "floorplan: {n} matched [llength $c] cells" }}',

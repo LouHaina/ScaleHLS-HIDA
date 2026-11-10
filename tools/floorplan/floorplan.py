@@ -246,10 +246,31 @@ def cmd_budget(a):
     # Solve a little below the budget: units that share an external buffer
     # influence each other and HIDA's output varies slightly between runs, so the
     # recompiled design is not exactly the sum of the measured units.
-    solve_caps = [{r: v * (1 - a.margin) for r, v in c.items()} for c in caps]
-    factors, assign, info = bg.solve_budget(units, tables, edges, K, solve_caps, **kw)
-    if factors is None:
-        print('no combination of the compiled factors fits the budget:', info, file=sys.stderr); sys.exit(2)
+    # With --compile the chosen design is compiled and measured; if an SLR is
+    # over its budget, the budget of that resource is tightened by the
+    # overshoot and the choice is repeated.
+    tighten = {r: 1.0 for r in RES}; final_graph = None; rounds = 0
+    while True:
+        solve_caps = [{r: v * (1 - a.margin) * tighten[r] for r, v in c.items()} for c in caps]
+        factors, assign, info = bg.solve_budget(units, tables, edges, K, solve_caps, **kw)
+        if factors is None:
+            print('no combination of the compiled factors fits the budget:', info, file=sys.stderr); sys.exit(2)
+        if not a.compile: break
+        uf = a.out_factors + '.try.json'; final_graph = a.out_factors + '.final.json'
+        json.dump({'unit_factors': [factors[u] for u in order]}, open(uf, 'w'))
+        run(a.compile.format(graph=final_graph, extra=f'loop-unroll-factor=2 floorplan-unit-factors={uf}'))
+        _, _, measured = unit_graph(load_graph(final_graph))
+        worst = {}
+        for k in range(K):
+            for r in RES:
+                used = sum(measured[u].get(r, 0) for u in units if assign[u] == k and u in measured)
+                if caps[k].get(r, 0) > 0 and used > caps[k][r]: worst[r] = max(worst.get(r, 0), used / caps[k][r])
+        if not worst: break
+        rounds += 1
+        if rounds > a.max_rounds:
+            print(f'still over budget after {a.max_rounds} rounds: {worst}', file=sys.stderr); sys.exit(3)
+        for r, over in worst.items(): tighten[r] *= 0.98 / over
+        print(f'  round {rounds}: recompiled design is over budget ({", ".join(f"{r} by {100 * (v - 1):.1f}%" for r, v in worst.items())}); solving again')
     lsum, lmax = bg.latency(tables, factors)
     use = bg.usage(tables, factors, assign, K, fixed)
     print(f"budget solved {info['status']} in {info['seconds']}s; share of each SLR {rhos}; objective {a.objective}; "
@@ -259,28 +280,35 @@ def cmd_budget(a):
         print(f"  SLR{k}: {sum(1 for u in factors if assign[u] == k)} units; {pct}")
     print('  unit factors: ' + ' '.join(str(factors[u]) for u in order))
     print(f'  latency by the HIDA estimate: sum {lsum:.4g}, largest unit {lmax:.4g}')
-    # The plain HIDA knob under the same budget.
-    rows = []
-    for path, bgraph in baselines:
-        cfg = graph_config(bgraph)
-        ok = bg.fits(units, {u: (v[1], v[2]) for u, v in cfg.items()}, edges, K, caps, **kw) is not None
-        bs, bm = sum(v[2] for v in cfg.values()), max(v[2] for v in cfg.values())
-        tot = {r: int(sum(v[1].get(r, 0) for v in cfg.values())) for r in ('dsp', 'bram')}
-        rows.append(dict(graph=os.path.basename(path), fits=ok, latency_sum=bs, latency_max=bm, **tot))
-        print(f"  knob {os.path.basename(path)}: {'fits' if ok else 'does not fit'}; dsp {tot['dsp']}, bram {tot['bram']}; latency sum {bs:.4g}, largest unit {bm:.4g}")
+    # Two references under the same budget: the plain HIDA knob (--baseline),
+    # and the same factor for every unit (the input graphs themselves).
     key = 'latency_max' if a.objective == 'max' else 'latency_sum'
-    ok_rows = [r for r in rows if r['fits']]
-    if ok_rows:
-        best = min(ok_rows, key=lambda r: r[key]); mine = lmax if a.objective == 'max' else lsum
-        print(f"  best knob setting that fits: {best['graph']}; per-unit factors are {best[key] / mine:.2f}x faster by the estimate")
+    mine = lmax if a.objective == 'max' else lsum
+    def evaluate(label, pairs):
+        rows = []
+        for path, bgraph in pairs:
+            cfg = graph_config(bgraph)
+            ok = bg.fits(units, {u: (v[1], v[2]) for u, v in cfg.items()}, edges, K, caps, **kw) is not None
+            bs, bm = sum(v[2] for v in cfg.values()), max(v[2] for v in cfg.values())
+            tot = {r: int(sum(v[1].get(r, 0) for v in cfg.values())) for r in ('dsp', 'bram')}
+            rows.append(dict(graph=os.path.basename(path), fits=ok, latency_sum=bs, latency_max=bm, **tot))
+            print(f"  {label} {os.path.basename(path)}: {'fits' if ok else 'does not fit'}; dsp {tot['dsp']}, bram {tot['bram']}; latency sum {bs:.4g}, largest unit {bm:.4g}")
+        ok_rows = [r for r in rows if r['fits']]
+        if ok_rows:
+            best = min(ok_rows, key=lambda r: r[key])
+            print(f"  best {label} that fits: {best['graph']}; per-unit factors are {best[key] / mine:.2f}x faster by the estimate")
+        return rows
+    rows = evaluate('knob', baselines)
+    uniform = evaluate('same factor', list(zip(a.graphs, graphs)))
     json.dump(dict(unit_factors=[factors[u] for u in order], units=order, rho=rhos, objective=a.objective,
-                   predicted_latency_sum=lsum, predicted_latency_max=lmax, predicted_usage=use, baselines=rows),
+                   predicted_latency_sum=lsum, predicted_latency_max=lmax, predicted_usage=use, baselines=rows, uniform=uniform, rounds=rounds),
               open(a.out_factors, 'w'), indent=1)
     areas = {u: {r: int(round(v)) for r, v in bg.area_at(tables, u, factors[u]).items()} for u in factors}
     areas.update(fixed)
     out = assignment_record(g, dev, K, units, edges, areas, assign, a.slack)
     out['solver'] = info; out['unit_factors'] = {u: factors[u] for u in order}
-    out['predicted_latency'] = dict(sum=lsum, max=lmax)
+    out['predicted_latency'] = dict(sum=lsum, max=lmax); out['rounds'] = rounds
+    if final_graph: print(f'  recompiled and within budget after {rounds} extra rounds: {final_graph}')
     json.dump(out, open(a.out, 'w'), indent=1)
     print(f'wrote {a.out_factors} (for floorplan-unit-factors=) and {a.out}')
 
@@ -504,6 +532,8 @@ def main():
     b.add_argument('--rho', type=float, default=0.6, help='share of each SLR that may be used')
     b.add_argument('--rho-slr', help='one share per SLR, e.g. 0.6,0.5,0.6 (lower the SLR that was congested)')
     b.add_argument('--margin', type=float, default=0.05, help='part of the budget kept free for differences between the measured units and the recompiled design')
+    b.add_argument('--compile', help='compile command as for sweep; the chosen design is compiled and the choice repeated until it is within budget')
+    b.add_argument('--max-rounds', type=int, default=5)
     b.add_argument('--objective', choices=['sum', 'max'], default='sum', help='sum of the unit latencies, or the largest one')
     b.add_argument('--assignment', help='keep the SLR assignment of this file and only choose factors')
     b.add_argument('--slack', type=int, default=2); b.add_argument('--time-limit', type=float, default=60)

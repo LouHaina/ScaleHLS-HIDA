@@ -79,15 +79,20 @@ def main():
                 tag = f'{d}/rho{rho}_{obj}'
                 r = subprocess.run([sys.executable, f'{HERE}/floorplan.py', 'budget', *unit.values(), '--baseline', *knob.values(),
                                     '--device', a.device, '--rho', str(rho), '--objective', obj,
+                                    '--compile', f'scalehls-opt {a.mlir} -hida-pytorch-pipeline="top-func={a.top} loop-tile-size={tile} '
+                                                 '{extra} floorplan-graph-output={graph}" -o /dev/null',
                                     '--out', f'{tag}.assignment.json', '--out-factors', f'{tag}.factors.json'],
                                    capture_output=True, text=True)
                 row = dict(tile=tile, rho=rho, objective=obj, units=n)
                 if r.returncode:
-                    row['status'] = 'no factors fit'; results.append(row); continue
+                    row['status'] = 'no factors fit' if r.returncode == 2 else 'failed: ' + r.stderr.strip()[-80:]
+                    results.append(row); continue
                 sol = json.load(open(f'{tag}.factors.json'))
                 key = 'latency_max' if obj == 'max' else 'latency_sum'
                 fit = [b for b in sol['baselines'] if b['fits']]
                 best = min(fit, key=lambda b: b[key]) if fit else None
+                ufit = [b for b in sol.get('uniform', []) if b['fits']]
+                ubest = min(ufit, key=lambda b: b[key]) if ufit else None
                 # Recompile the chosen design several times and check each one.
                 finals = [pool.submit(compile_graph, a, tile, f'loop-unroll-factor=2 floorplan-unit-factors={tag}.factors.json',
                                       f'{tag}.final{i}.json') for i in range(a.repeat)]
@@ -95,24 +100,28 @@ def main():
                 checks = [subprocess.run([sys.executable, f'{HERE}/floorplan.py', 'budget-check', g, f'{tag}.assignment.json',
                                           '--device', a.device, '--rho', str(rho)], capture_output=True).returncode == 0 for g in finals]
                 meas = [totals(g) for g in finals]
-                row.update(status='ok', factors=sol['unit_factors'], predicted=sol['predicted_' + key],
+                row.update(status='ok', rounds=sol.get('rounds', 0), factors=sol['unit_factors'], predicted=sol['predicted_' + key],
                            measured=[m[key] for m in meas], dsp=[m['dsp'] for m in meas],
                            checks_passed=sum(checks), checks=len(checks),
                            knob=best['graph'] if best else None, knob_latency=best[key] if best else None,
-                           knob_dsp=best['dsp'] if best else None)
+                           knob_dsp=best['dsp'] if best else None,
+                           same=ubest['graph'] if ubest else None, same_latency=ubest[key] if ubest else None)
                 results.append(row)
         json.dump(results, open(os.path.join(a.out_dir, 'results.json'), 'w'), indent=1)
-    print('\n| tile | share per SLR | objective | best knob that fits | knob latency | per-unit latency (median) | ratio | spread of repeats | expected vs measured | budget check |')
-    print('|---|---|---|---|---|---|---|---|---|---|')
+    print('\n| tile | share per SLR | objective | best knob that fits | knob latency | best same factor that fits | its latency | per-unit latency (median) | vs knob | vs same factor | spread of repeats | expected vs measured | extra rounds | budget check |')
+    print('|---|---|---|---|---|---|---|---|---|---|---|---|---|---|')
     for r in results:
         if r['status'] != 'ok' or not r['measured']:
-            print(f"| {r['tile']} | {r['rho']} | {r['objective']} | - | - | {r['status']} | - | - | - | - |"); continue
+            print(f"| {r['tile']} | {r['rho']} | {r['objective']} | - | - | - | - | {r['status']} | - | - | - | - | - | - |"); continue
         med = statistics.median(r['measured']); spread = (max(r['measured']) - min(r['measured'])) / med
         knob = r['knob'].replace('knob_', '').replace('.json', '') if r['knob'] else 'none fits'
         kl = f"{r['knob_latency']:.3g}" if r['knob'] else '-'
         ratio = f"{r['knob_latency'] / med:.2f}x" if r['knob'] else '-'
-        print(f"| {r['tile']} | {r['rho']} | {r['objective']} | {knob} | {kl} | {med:.3g} | {ratio} | {spread:.1%} | "
-              f"{(med - r['predicted']) / r['predicted']:+.1%} | {r['checks_passed']}/{r['checks']} |")
+        same = r['same'].replace('all_', '').replace('.json', '') if r.get('same') else 'none fits'
+        sl = f"{r['same_latency']:.3g}" if r.get('same') else '-'
+        sratio = f"{r['same_latency'] / med:.2f}x" if r.get('same') else '-'
+        print(f"| {r['tile']} | {r['rho']} | {r['objective']} | {knob} | {kl} | {same} | {sl} | {med:.3g} | {ratio} | {sratio} | {spread:.1%} | "
+              f"{(med - r['predicted']) / r['predicted']:+.1%} | {r['rounds']} | {r['checks_passed']}/{r['checks']} |")
 
 
 if __name__ == '__main__':

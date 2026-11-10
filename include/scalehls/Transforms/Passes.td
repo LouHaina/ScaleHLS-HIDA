@@ -147,7 +147,15 @@ def ParallelizeDataflowNode :
     Option<"complexityAware", "complexity-aware", "bool", /*default=*/"true",
            "Whether to consider node complexity in the transform">,
     Option<"correlationAware", "correlation-aware", "bool", /*default=*/"true",
-           "Whether to consider node correlation in the transform">
+           "Whether to consider node correlation in the transform">,
+    Option<"unitFactors", "unit-factors", "std::string", /*default=*/"\"\"",
+           "File path: JSON with \"unit_factors\", one unroll factor per "
+           "top-level dataflow node in program order (overrides the "
+           "complexity-based factor of these nodes)">,
+    Option<"recordUnitFactors", "record-unit-factors", "bool",
+           /*default=*/"false",
+           "Record the unroll factor of each top-level dataflow node in the "
+           "\"unit_unroll_factors\" attribute of the function">
   ];
 }
 

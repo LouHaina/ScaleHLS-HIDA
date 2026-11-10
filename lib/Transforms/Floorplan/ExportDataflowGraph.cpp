@@ -43,6 +43,9 @@ struct NodeRecord {
   bool hasDataflow = false;
   int64_t lut = 0, dsp = 0, bram = 0;
   int64_t latency = 0, interval = 0;
+  /// Position among the units and the unroll factor it was compiled with
+  /// (-1 if unknown); used by the SLR budget solver.
+  int64_t unitIndex = -1, unroll = -1;
   SmallVector<std::string> callees;
 };
 
@@ -255,11 +258,30 @@ struct ExportDataflowGraph
     llvm::SetVector<StringRef> unitNames;
     top.walk([&](func::CallOp call) { unitNames.insert(call.getCallee()); });
 
+    // Unroll factors recorded by ParallelizeDataflowNode, one per top-level
+    // dataflow node in program order. They are only trusted if the number of
+    // units is still the same, i.e. no later pass merged or split units.
+    SmallVector<int64_t> unitUnroll;
+    if (auto attr = top->getAttrOfType<ArrayAttr>("unit_unroll_factors"))
+      for (auto factor : attr.getAsValueRange<IntegerAttr>())
+        unitUnroll.push_back(factor.getSExtValue());
+    bool unrollValid = !unitUnroll.empty() &&
+                       unitUnroll.size() == unitNames.size();
+    if (!unitUnroll.empty() && !unrollValid)
+      top.emitWarning("recorded ")
+          << unitUnroll.size() << " unit unroll factors but found "
+          << unitNames.size() << " units; factors are not exported";
+
+    unsigned nextOrdinal = 0;
     for (auto unitName : unitNames) {
+      auto unitOrdinal = nextOrdinal++;
       auto unit = module.lookupSymbol<func::FuncOp>(unitName);
       if (!unit)
         continue;
       recordNode(unit, "", /*isUnit=*/true);
+      nodes[unitName].unitIndex = unitOrdinal;
+      if (unrollValid)
+        nodes[unitName].unroll = unitUnroll[unitOrdinal];
       unit->setAttr("floorplan_unit", UnitAttr::get(context));
       unit->setAttr("inline_off", UnitAttr::get(context));
       unit->removeAttr("inline");
@@ -312,6 +334,8 @@ struct ExportDataflowGraph
             J.attribute("lut", rec.lut);
             J.attribute("dsp", rec.dsp);
             J.attribute("bram", rec.bram);
+            J.attribute("unit_index", rec.unitIndex);
+            J.attribute("unroll", rec.unroll);
             J.attribute("latency", rec.latency);
             J.attribute("interval", rec.interval);
             J.attributeArray("callees", [&] {

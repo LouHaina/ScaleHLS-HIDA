@@ -162,6 +162,12 @@ struct HIDAPyTorchPipelineOptions
       llvm::cl::desc("Export the dataflow graph JSON for the SLR floorplanner "
                      "(empty to disable)")};
 
+  Option<std::string> floorplanUnitFactors{
+      *this, "floorplan-unit-factors", llvm::cl::init(""),
+      llvm::cl::desc("Per-unit unroll factors (JSON) chosen under the per-SLR "
+                     "resource budget by tools/floorplan/floorplan.py budget "
+                     "(empty to use loop-unroll-factor for every unit)")};
+
   Option<std::string> floorplanAssignment{
       *this, "floorplan-assignment", llvm::cl::init(""),
       llvm::cl::desc("Apply the SLR assignment JSON produced by "
@@ -311,7 +317,9 @@ void scalehls::registerHIDAPyTorchPipeline() {
         // Parallelize dataflow.
         pm.addNestedPass<func::FuncOp>(scalehls::createParallelizeDataflowNodePass(
             opts.loopUnrollFactor, /*unrollPointLoopOnly=*/true,
-            opts.complexityAware, opts.correlationAware));
+            opts.complexityAware, opts.correlationAware,
+            opts.floorplanUnitFactors,
+            /*recordUnitFactors=*/!opts.floorplanGraphOutput.empty()));
         pm.addNestedPass<func::FuncOp>(mlir::createSimplifyAffineStructuresPass());
         pm.addNestedPass<func::FuncOp>(scalehls::createLegalizeDataflowPass());
         pm.addPass(mlir::createCanonicalizerPass());

@@ -203,9 +203,12 @@ How it works:
   `graph.json` (`unit_index`, `unroll`).
 - `budget` does not model area or latency. For every unit it reads both from
   the graphs in which that unit was compiled at that factor, so the candidates
-  of a unit are the factors of the sweep. It minimizes the sum of the unit
-  latencies (`--objective max`: the largest one), then area, then the cut. A
-  factor that costs area without making the unit faster is not chosen.
+  of a unit are the factors of the sweep. It minimizes the latency of the
+  slowest unit (`--objective sum`: all unit latencies added), then area, then
+  the cut. A factor that costs area without making the unit faster is not
+  chosen. The slowest unit is the default because the top level starts all
+  units together and waits for the last one, and HIDA's own estimate of the top
+  function equals the slowest unit plus two cycles.
 - `--rho` is the share of every SLR that may be used; `--rho-slr 0.6,0.5,0.6`
   lowers one SLR, which is the feedback step after a run that was congested
   there. `--assignment` keeps an earlier SLR assignment and only re-chooses
@@ -265,6 +268,14 @@ Checks made on these runs:
 
 What this does and does not show:
 
+- With the slowest unit as the measure, which is what sets the frame time,
+  these estimates predict no gain. The gains in the table are for the sum
+  (`--objective sum`).
+- The gain is not specific to SLRs. Solving the same cases with one pooled
+  budget (one region with three times the capacity) gives the same latency to
+  within 0.2 percent, for both objectives, at tiles 4, 8 and 16 and shares
+  0.2, 0.45 and 0.6. What the table shows is factor selection under a resource
+  budget; the per-SLR limit only makes the result placeable.
 - By the estimator's numbers an uneven distribution is better than HIDA's
   split by share of computation, and the advantage grows with the tile size.
   At tile 2 there is nothing to gain.

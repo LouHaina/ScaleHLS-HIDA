@@ -78,6 +78,24 @@ def find_cycles(units, edges):
         out.append((ids, tokens))
     return out
 
+def assignment_record(g, dev, K, units, edges, areas, assign, slack):
+    """The assignment.json content shared by `solve` and `budget`."""
+    full = dict(assign)
+    for n in g['nodes']:
+        if not n.get('is_unit') and n.get('parent') in assign: full[n['name']] = assign[n['parent']]
+    channels = {}
+    cut = []
+    for e in edges:
+        dd = abs(assign[e['src']] - assign[e['dst']])
+        if dd == 0 or e['src'].startswith('__') or e['dst'].startswith('__'): continue
+        cut.append(dict(e, distance=dd))
+        if e['kind'] in ('token', 'stream') and e.get('channel'):
+            channels[e['channel']] = {'depth': max(int(e.get('depth', 1)), 2) + 2 * dd + slack}
+    real_units = [u for u in units if not u.startswith('__')]
+    full = {n: k for n, k in full.items() if not n.startswith('__')}
+    return dict(device=dev['name'], slrs=K, assignment=full, units=real_units, channels=channels,
+                cut_edges=cut, score=ilp.score(assign, edges, areas, K), areas=areas)
+
 # ----------------------------------------------------------------------------
 # solve
 # ----------------------------------------------------------------------------
@@ -149,26 +167,126 @@ def cmd_solve(a):
     if best_cut: print(f'warning: {best_cut} failing unit pairs are still split across SLRs (capacity or anchors prevent co-location)')
     if assign is None:
         print('ILP infeasible:', info, file=sys.stderr); sys.exit(2)
-    full = dict(assign)
-    for n in g['nodes']:
-        if not n.get('is_unit') and n.get('parent') in assign: full[n['name']] = assign[n['parent']]
-    channels = {}
-    cut = []
-    for i, e in enumerate(edges):
-        dd = abs(assign[e['src']] - assign[e['dst']])
-        if dd == 0 or e['src'].startswith('__') or e['dst'].startswith('__'): continue
-        cut.append(dict(e, distance=dd))
-        if e['kind'] in ('token', 'stream') and e.get('channel'):
-            channels[e['channel']] = {'depth': max(int(e.get('depth', 1)), 2) + 2 * dd + a.slack}
-    real_units = [u for u in units if not u.startswith('__')]
-    full = {n: k for n, k in full.items() if not n.startswith('__')}
-    out = dict(device=dev['name'], slrs=K, assignment=full, units=real_units, channels=channels,
-               cut_edges=cut, score=ilp.score(assign, edges, areas, K), solver=dict(status=info['status'], seconds=round(info['seconds'], 2)),
-               areas=areas)
+    out = assignment_record(g, dev, K, units, edges, areas, assign, a.slack)
+    out['solver'] = dict(status=info['status'], seconds=round(info['seconds'], 2))
     json.dump(out, open(a.out, 'w'), indent=1)
     sc = out['score']
     print(f"solved {info['status']} in {info['seconds']:.1f}s: cut={sc['n_cut']} {sc['cut_edges']} bits/boundary={sc['sll_bits_per_boundary']}")
     for k, per in enumerate(sc['per_slr']): print(f"  SLR{k}: {per}")
+
+# ----------------------------------------------------------------------------
+# budget: per-unit unroll factors under a per-SLR resource budget
+# ----------------------------------------------------------------------------
+def slr_caps(dev, K, rho, rho_slr):
+    rhos = [float(v) for v in rho_slr.split(',')] if rho_slr else [rho] * K
+    if len(rhos) != K: raise SystemExit(f'--rho-slr needs {K} values')
+    return [{r: dev['capacity_per_slr'].get(r, 0) * rhos[k] for r in RES} for k in range(K)], rhos
+
+def unit_samples(graphs, calibrations):
+    """unit -> [(factor, areas, latency)] over all graphs; also the unit order."""
+    samples = defaultdict(list); order = None
+    for gi, g in enumerate(graphs):
+        calib = calibrations[gi] if gi < len(calibrations) else None
+        units, _, areas = unit_graph(g, calib)
+        idx = {u: g['node_by_name'][u].get('unit_index', -1) for u in units if not u.startswith('__')}
+        if any(v < 0 for v in idx.values()):
+            raise SystemExit('graph has no unit_index: export it with a compiler that has the unit factor support')
+        this = [u for u, _ in sorted(idx.items(), key=lambda kv: kv[1])]
+        if order is None: order = this
+        elif this != order:
+            raise SystemExit('the graphs do not have the same units in the same order; they must come from the same model and options except the unroll factors')
+        for u in this:
+            n = g['node_by_name'][u]
+            if n.get('unroll', -1) <= 0:
+                raise SystemExit(f'unit {u} has no recorded unroll factor (set floorplan-graph-output on the pipeline so factors are recorded)')
+            samples[u].append((n['unroll'], areas[u], n.get('latency', 0)))
+    return samples, order
+
+def cmd_budget(a):
+    import budget as bg
+    graphs = [load_graph(p) for p in a.graphs]
+    calibs = [json.load(open(p)) for p in (a.calibration or [])]
+    dev = json.load(open(a.device)); K = a.slrs or dev['slrs']
+    caps, rhos = slr_caps(dev, K, a.rho, a.rho_slr)
+    samples, order = unit_samples(graphs, calibs)
+    models, no_latency = bg.fit_models(samples)
+    g = graphs[0]
+    units, edges, areas0 = unit_graph(g, calibs[0] if calibs else None)
+    fixed = {u: areas0[u] for u in units if u not in models}
+    base = {u: samples[u][0][0] for u in order}
+    cands = {}
+    for u in order:
+        hi = max(max(models[u]['points']) * a.max_scale, 1)
+        cands[u] = sorted(set(bg.candidate_factors(1, int(hi))) | set(models[u]['points']))
+    anchors = {}
+    axi_slr = dev.get('memory_anchors', {}).get('axi')
+    if axi_slr is not None and '__mem__' in units: anchors['__mem__'] = axi_slr
+    groups = [(e['src'], e['dst']) for e in edges if e['kind'] == 'buffer']
+    prev = json.load(open(a.assignment))['assignment'] if a.assignment else None
+    kw = dict(fixed=fixed, objective=a.objective, anchors=anchors, groups=groups, assignment=prev, time_limit=a.time_limit)
+    factors, assign, info = bg.solve_budget(units, models, edges, K, caps, candidates=cands, **kw)
+    if factors is None:
+        print('no factors fit the budget even at the smallest candidates:', info, file=sys.stderr); sys.exit(2)
+    # What the single HIDA knob reaches under the same budget, for comparison.
+    scales = sorted({c / 8 for c in bg.candidate_factors(1, int(8 * a.max_scale))})
+    us, uf, uasg = bg.best_uniform(units, models, edges, K, caps, base, scales, **kw)
+    lat = bg.total_latency(models, factors, a.objective)
+    print(f"budget solved {info['status']} in {info['seconds']}s, rho per SLR {rhos}, objective {a.objective}")
+    if no_latency:
+        print(f'note: {no_latency} units have no latency estimate; their share of the work is taken from the base factors')
+    if len(graphs) == 1:
+        print('note: one graph only, so area is assumed proportional to the factor (constant for BRAM/URAM); give graphs of two factors for a fitted model')
+    use = bg.usage(models, factors, assign, K, fixed)
+    for k in range(K):
+        pct = ', '.join(f"{r} {use[k][r]} ({100 * use[k][r] / caps[k][r] * rhos[k]:.0f}%)" for r in RES if caps[k].get(r, 0) > 0 and use[k][r])
+        print(f"  SLR{k}: {sum(1 for u in factors if assign[u] == k)} units; {pct}")
+    print('  unit factors (base -> chosen): ' + ', '.join(f"{u.split('_')[-1]} {base[u]}->{factors[u]}" for u in order))
+    cmp = None
+    if uf is not None:
+        ulat = bg.total_latency(models, uf, a.objective)
+        cmp = dict(scale=us, latency=ulat, factors=[uf[u] for u in order])
+        print(f"  predicted latency: {lat:.4g} with per-unit factors, {ulat:.4g} with one common scale (x{us:g} of the base); ratio {ulat / lat:.2f}x")
+    else:
+        print('  one common scale does not fit the budget at any tried size; only per-unit factors do')
+    json.dump(dict(unit_factors=[factors[u] for u in order], units=order, base_factors=[base[u] for u in order],
+                   rho=rhos, objective=a.objective, predicted_latency=lat, uniform=cmp,
+                   predicted_usage=use), open(a.out_factors, 'w'), indent=1)
+    areas = {u: {r: int(round(v)) for r, v in bg.area_at(models[u], factors[u]).items()} for u in factors}
+    areas.update(fixed)
+    out = assignment_record(g, dev, K, units, edges, areas, assign, a.slack)
+    out['solver'] = info; out['unit_factors'] = {u: factors[u] for u in order}
+    json.dump(out, open(a.out, 'w'), indent=1)
+    print(f'wrote {a.out_factors} (for floorplan-unit-factors=) and {a.out}')
+
+def cmd_budget_check(a):
+    """Compare a graph compiled with the chosen factors against the budget."""
+    g = load_graph(a.graph); dev = json.load(open(a.device))
+    asg = json.load(open(a.assignment)); K = asg['slrs']
+    caps, rhos = slr_caps(dev, K, a.rho, a.rho_slr)
+    units, _, areas = unit_graph(g, json.load(open(a.calibration)) if a.calibration else None)
+    assign = asg['assignment']; over = False
+    use = [{r: 0 for r in RES} for _ in range(K)]
+    for u in units:
+        if u in assign:
+            for r in RES: use[assign[u]][r] += areas[u].get(r, 0)
+    for k in range(K):
+        parts = []
+        for r in RES:
+            if caps[k].get(r, 0) <= 0 or not use[k][r]: continue
+            bad = use[k][r] > caps[k][r]; over |= bad
+            parts.append(f"{r} {use[k][r]} / {int(caps[k][r])}{' OVER' if bad else ''}")
+        print(f"  SLR{k}: {', '.join(parts)}")
+    want = asg.get('unit_factors', {}); pred = asg.get('areas', {})
+    rows = []
+    for u in units:
+        n = g['node_by_name'][u]
+        if u in want and n.get('unroll', -1) != want[u]: rows.append(f"{u}: factor {n.get('unroll')} instead of {want[u]}")
+        p, m = pred.get(u, {}).get(a.resource, 0), areas[u].get(a.resource, 0)
+        if p and abs(m - p) > a.tolerance * p: rows.append(f"{u}: {a.resource} {m} vs predicted {p}")
+    for r in rows: print('  ' + r)
+    print('budget exceeded: pass this graph to `budget` as another point and solve again' if over
+          else f'within budget; {len(rows)} units differ from the prediction by more than {a.tolerance:.0%}')
+    sys.exit(1 if over else 0)
 
 # ----------------------------------------------------------------------------
 # emit
@@ -341,6 +459,23 @@ def main():
     e.add_argument('--out-manifest', default='manifest.json'); e.add_argument('--soft', action='store_true'); e.set_defaults(fn=cmd_emit)
     c = sub.add_parser('calibrate'); c.add_argument('graph'); c.add_argument('--hls-dir', default='.'); c.add_argument('--report'); c.add_argument('--out', default='calibration.json'); c.set_defaults(fn=cmd_calibrate)
     l = sub.add_parser('loop'); l.add_argument('config'); l.set_defaults(fn=cmd_loop)
+    b = sub.add_parser('budget', help='per-unit unroll factors under a per-SLR resource budget')
+    b.add_argument('graphs', nargs='+', help='graph.json of the same design at one or more unroll factors; the first is the base')
+    b.add_argument('--device', required=True); b.add_argument('--slrs', type=int, default=0)
+    b.add_argument('--rho', type=float, default=0.6, help='share of each SLR that may be used')
+    b.add_argument('--rho-slr', help='one share per SLR, e.g. 0.6,0.5,0.6 (lower the SLR that was congested)')
+    b.add_argument('--objective', choices=['sum', 'max'], default='sum', help='sum: latency of one frame; max: slowest unit')
+    b.add_argument('--max-scale', type=float, default=4.0, help='largest factor tried, relative to the largest compiled one')
+    b.add_argument('--calibration', nargs='+', help='calibration.json per graph, in the same order')
+    b.add_argument('--assignment', help='keep the SLR assignment of this file and only choose factors')
+    b.add_argument('--slack', type=int, default=2); b.add_argument('--time-limit', type=float, default=60)
+    b.add_argument('--out', default='assignment.json'); b.add_argument('--out-factors', default='unit_factors.json')
+    b.set_defaults(fn=cmd_budget)
+    k = sub.add_parser('budget-check', help='check a recompiled graph against the budget')
+    k.add_argument('graph'); k.add_argument('assignment'); k.add_argument('--device', required=True)
+    k.add_argument('--rho', type=float, default=0.6); k.add_argument('--rho-slr'); k.add_argument('--calibration')
+    k.add_argument('--resource', default='dsp'); k.add_argument('--tolerance', type=float, default=0.2)
+    k.set_defaults(fn=cmd_budget_check)
     a = ap.parse_args(); a.fn(a)
 
 if __name__ == '__main__':

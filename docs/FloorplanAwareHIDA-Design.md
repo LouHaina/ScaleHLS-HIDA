@@ -145,6 +145,18 @@ Reconvergent paths: after depths are set, run AutoBridge's latency-balancing ILP
 
 The Vitis dataflow controller of `forward` (FSM, `ap_sync_*`, `start_for_*` FIFOs) is not a unit. It is small and connects to every unit. Leave it unconstrained in the C++ tier (Vivado places it centrally); in the RTL tier, its per-process sync signals get one register per boundary. The existing design already excludes `forward` from assignment; keep that.
 
+### 6.5 Per-SLR resource budget (unit unroll factors)
+
+HIDA units exchange data through external memory, not through direct channels, so there are almost no inter-unit wires for the assignment of Section 6.2 to shorten. What the SLR structure can decide for such a design is how large each unit may be. This follows Prometheus, which maps each task to an SLR under a per-SLR resource constraint and reports throughput from a larger design, not a higher frequency.
+
+- Decision variables: an unroll factor and an SLR per unit.
+- Constraint: per SLR and resource, the sum of the unit areas is at most `rho_k` times the capacity. `rho_k` is lowered for an SLR that was congested in the previous run; this replaces "move the unit" as the main feedback action.
+- Objective: the sum of the unit latencies (or the largest one), then area, then the cut of Section 6.2.
+- Area and latency of a unit at a factor are measured, not modelled: the design is compiled once per candidate factor, which takes a few seconds, and the values are read from the exported graph. The chosen mix is compiled again and checked.
+- Compiler support: `scalehls-parallelize-dataflow-node` takes one factor per top-level dataflow node and records the factor it used; the pipeline option is `floorplan-unit-factors`.
+
+Two properties of HIDA limit how independent the units are. Nodes that share an external buffer must use identical factors on the shared dimensions, so a unit's neighbours change slightly with it; and the compiler output is not identical from run to run. Both are covered by a margin in the solver and by the check after recompiling. Commands and first results are in `tools/floorplan/README.md`.
+
 ## 7. Constraint emission (component D)
 
 `floorplan.tcl`:
@@ -273,6 +285,7 @@ Implemented on branch `claude/fpga-floorplan-impl` (see `tools/floorplan/README.
 
 - `scalehls-export-dataflow-graph` and `scalehls-apply-floorplan` passes (components B and D), pipeline options `floorplan-graph-output` and `floorplan-assignment`, `#pragma HLS inline off` and `#pragma HLS stream depth` emission.
 - `tools/floorplan/floorplan.py` with `solve` (CP-SAT ILP of Section 6.2, including anchors, grouping, cycle budget, locks and penalties), `emit` (pblock or soft constraints plus manifest), `calibrate` (csynth instance table) and `loop` (the outer iteration of Section 8), plus `parse_reports.py`, `run_vivado_iter.tcl`, `hls_csynth.tcl` and device files for U280 and U250.
+- Per-SLR resource budget of Section 6.5: per-unit unroll factors in the compiler, `sweep`, `budget` and `budget-check` in `floorplan.py`. Tested with HIDA's estimates only; not yet with Vitis HLS areas or routed designs.
 - Not implemented yet: buffer-to-stream conversion of cut on-chip buffer edges (the solver keeps such pairs grouped instead), latency balancing of reconvergent paths, and the RTL relay-station tier.
 
 HIDA's estimator reports LUT = 0 for every function and over-estimates BRAM, so the ILP balances on DSP until the first csynth calibration replaces the areas. Calibration is therefore the first step of every real run, not an optimization.

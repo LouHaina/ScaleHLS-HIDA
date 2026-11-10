@@ -168,6 +168,85 @@ unaffected units keep a failing pair apart, the solve is repeated without
 locks. Moving units only helps while co-location is possible; crossings that
 must remain need registers (design document, section 6.3).
 
+## Per-SLR resource budget (unit unroll factors)
+
+Plain HIDA has one knob, `loop-unroll-factor`, and splits it over the units by
+their share of the computation. With a budget, every unit gets its own factor,
+chosen together with its SLR so that each SLR stays under a share of its
+resources. The aim is a larger design that still fits and routes, measured in
+frames per second, not a faster clock for the same design.
+
+```
+C='scalehls-opt samples/pytorch/resnet18/resnet18.mlir -hida-pytorch-pipeline="top-func=forward loop-tile-size=4 {extra} floorplan-graph-output={graph}" -o /dev/null'
+
+# 1. compile at several factors (about 5 s each) and export a graph each time
+floorplan.py sweep --compile "$C" --factors 1,2,4,8,16,32,64 --knob 2,8,32,64,128,256 --out-dir sweep
+
+# 2. choose a factor and an SLR per unit; at most 60 percent of every SLR
+floorplan.py budget sweep/all_*[0-9].json --baseline sweep/knob_*.json \
+    --device devices/u280.json --rho 0.6 --out assignment.json --out-factors unit_factors.json
+
+# 3. compile with the chosen factors, then check the result against the budget
+scalehls-opt resnet18.mlir -hida-pytorch-pipeline="top-func=forward loop-tile-size=4 loop-unroll-factor=2 \
+    floorplan-unit-factors=unit_factors.json floorplan-graph-output=final.json floorplan-assignment=assignment.json" \
+  | scalehls-translate -scalehls-emit-hlscpp -emit-vitis-directives > design.cpp
+floorplan.py budget-check final.json assignment.json --device devices/u280.json --rho 0.6
+floorplan.py emit assignment.json --device devices/u280.json --out-tcl floorplan.tcl --out-manifest manifest.json
+```
+
+How it works:
+
+- `scalehls-parallelize-dataflow-node` accepts `unit-factors=<json>` (pipeline
+  option `floorplan-unit-factors`): one factor per top-level dataflow node, in
+  program order. A file written for a different number of units is rejected.
+  The factor each unit was compiled with is recorded and exported in
+  `graph.json` (`unit_index`, `unroll`).
+- `budget` does not model area or latency. For every unit it reads both from
+  the graphs in which that unit was compiled at that factor, so the candidates
+  of a unit are the factors of the sweep. It minimizes the sum of the unit
+  latencies (`--objective max`: the largest one), then area, then the cut. A
+  factor that costs area without making the unit faster is not chosen.
+- `--rho` is the share of every SLR that may be used; `--rho-slr 0.6,0.5,0.6`
+  lowers one SLR, which is the feedback step after a run that was congested
+  there. `--assignment` keeps an earlier SLR assignment and only re-chooses
+  factors. The solver keeps `--margin` (5 percent) free, because units that
+  share an external buffer influence each other a little and HIDA's output
+  varies slightly from run to run.
+- `--baseline` graphs are compiles with the plain knob. For each one `budget`
+  reports whether it fits the same budget and its latency.
+
+### Result on ResNet18 (tile 4, U280 device file, 24 units)
+
+All numbers are HIDA's own estimates (QoR estimation pass), not HLS or Vivado
+results. Latency is the sum of the unit latencies in cycles.
+
+| Share per SLR | Best plain knob that fits | Its latency | Unit factors | Recompiled latency | Ratio |
+|---|---|---|---|---|---|
+| 0.6 | `loop-unroll-factor=64` | 3.09e9 | 16 64 64 64 8 64 64 64 64 1 64 64 4 4 64 4 4 1 1 1 1 1 1 64 | 2.26e9 | 1.37x |
+| 0.3 | `loop-unroll-factor=32` | 3.21e9 | 16 8 64 8 8 8 8 64 8 4 8 8 4 4 64 4 4 1 1 64 1 1 64 1 | 2.36e9 | 1.36x |
+| 0.1 | `loop-unroll-factor=2` | 3.66e9 | 9 64 64 4 2 4 2 64 4 1 4 2 64 64 64 4 64 1 1 64 1 64 64 64 | 2.62e9 | 1.39x |
+
+In all three cases the recompiled design passed `budget-check`, and its
+latency was within 4 percent of what `budget` expected. A few units differed
+from the expected DSP count by more than 20 percent (two at 0.6, three at 0.3),
+which is the neighbour effect the margin is for.
+
+What this does and does not show:
+
+- It shows that the estimator's own numbers favour an uneven distribution: the
+  plain knob gives most of the factor to the first convolution, and several
+  later units get slower, by the estimate, when unrolled further.
+- It does not show a hardware gain. The estimator reports LUT = 0 and
+  over-estimates BRAM, so here the budget is bounded by estimated BRAM and DSP
+  only. The table has to be repeated with Vitis HLS areas and then with routed
+  designs (`eval_sweep.py`) before it is a result.
+- With `loop-tile-size=4` the units stop growing beyond a factor of about 16,
+  which is why the design stays small. Larger designs need a larger tile size.
+
+Tests: `python3 tools/floorplan/test_budget.py`, and the lit tests
+`test/Transforms/Dataflow/parallelize-unit-factors.mlir` and
+`test/Transforms/Floorplan/export-unit-factors.mlir`.
+
 ## Evaluation against the unconstrained baseline
 
 `eval_sweep.py` runs every arm through the same Tcl, clock period and placer

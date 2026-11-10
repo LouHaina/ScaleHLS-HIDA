@@ -259,7 +259,7 @@ Checks made on these runs:
   1.25x (share 0.1) to 1.72x (share 0.2) faster than the best plain-knob
   design: 1.41x at 0.3, 1.69x at 0.45, 1.51x at 0.6.
 - With `--objective max` (the slowest unit instead of the sum) there is almost
-  no gain: 1.00x to 1.01x in 15 of 19 cases, because the slowest unit is
+  no gain: 1.00x to 1.01x in 16 of 19 cases, because the slowest unit is
   already at its best factor in the plain-knob design. If frames are processed
   back to back and the units overlap, this is the number that matters.
 

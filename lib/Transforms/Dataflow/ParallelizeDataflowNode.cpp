@@ -12,6 +12,8 @@
 #include "scalehls/Transforms/Passes.h"
 #include "scalehls/Transforms/Utils.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/JSON.h"
+#include "llvm/Support/MemoryBuffer.h"
 
 #define DEBUG_TYPE "parallelize-dataflow-node"
 
@@ -84,11 +86,46 @@ struct ParallelizeDataflowNode
     : public ParallelizeDataflowNodeBase<ParallelizeDataflowNode> {
   ParallelizeDataflowNode() = default;
   ParallelizeDataflowNode(unsigned loopUnrollFactor, bool unrollPointLoopOnly,
-                          bool argComplexityAware, bool argCorrelationAware) {
+                          bool argComplexityAware, bool argCorrelationAware,
+                          std::string argUnitFactors = "",
+                          bool argRecordUnitFactors = false) {
     maxUnrollFactor = loopUnrollFactor;
     pointLoopOnly = unrollPointLoopOnly;
     complexityAware = argComplexityAware;
     correlationAware = argCorrelationAware;
+    unitFactors = argUnitFactors;
+    recordUnitFactors = argRecordUnitFactors;
+  }
+
+  /// Read the per-unit unroll factors chosen by the SLR budget solver
+  /// (tools/floorplan/floorplan.py budget). A unit is a node of the top-level
+  /// schedule; the list is indexed by the program order of these nodes.
+  bool loadUnitFactors(func::FuncOp func) {
+    requestedUnitFactors.clear();
+    if (unitFactors.empty())
+      return true;
+    auto file = llvm::MemoryBuffer::getFile(unitFactors);
+    if (!file) {
+      func.emitError("cannot read unit factors file: ") << unitFactors;
+      return false;
+    }
+    auto parsed = llvm::json::parse(file.get()->getBuffer());
+    if (!parsed) {
+      llvm::consumeError(parsed.takeError());
+      func.emitError("cannot parse unit factors json: ") << unitFactors;
+      return false;
+    }
+    auto *root = parsed->getAsObject();
+    auto *list = root ? root->getArray("unit_factors") : nullptr;
+    if (!list) {
+      func.emitError("unit factors json has no \"unit_factors\" array");
+      return false;
+    }
+    for (auto &value : *list) {
+      auto factor = value.getAsInteger();
+      requestedUnitFactors.push_back(factor && *factor > 0 ? *factor : 0);
+    }
+    return true;
   }
 
   /// Try to calculate the unroll factors of the nodes contained in each
@@ -96,6 +133,7 @@ struct ParallelizeDataflowNode
   void getNodeParallelFactorMap(func::FuncOp func) {
     auto compAnal = ComplexityAnalysis(func);
     nodeParallelFactorMap.clear();
+    appliedUnitFactors.clear();
 
     func.walk<WalkOrder::PreOrder>([&](ScheduleOp schedule) {
       unsigned long scheduleUnrollFactor = maxUnrollFactor.getValue();
@@ -130,6 +168,17 @@ struct ParallelizeDataflowNode
         auto nodeUnrollFactor = 1 + scheduleUnrollFactor *
                                         nodeComplexity.value() /
                                         scheduleComplexity.value();
+
+        // Nodes of a top-level schedule are the floorplan units. Their factor
+        // can be overridden by the SLR budget, and is recorded so that the
+        // exported graph tells which factor produced which area.
+        if (!schedule->getParentOfType<NodeOp>()) {
+          auto unitIndex = appliedUnitFactors.size();
+          if (unitIndex < requestedUnitFactors.size() &&
+              requestedUnitFactors[unitIndex] > 0)
+            nodeUnrollFactor = requestedUnitFactors[unitIndex];
+          appliedUnitFactors.push_back(nodeUnrollFactor);
+        }
         nodeParallelFactorMap.insert({node, nodeUnrollFactor});
 
         LLVM_DEBUG(
@@ -202,10 +251,20 @@ struct ParallelizeDataflowNode
 
     // Optimize the unroll factors from the most critical node.
     llvm::SmallDenseMap<NodeOp, FactorList> nodeUnrollFactorsMap;
+    llvm::SmallDenseMap<NodeOp, unsigned> nodeVisitCount;
     while (!worklist.empty()) {
       auto current = worklist.pop_back_val();
       auto node = current.first;
       auto corrNum = current.second;
+
+      // Nodes sharing an external buffer must end up with identical factors,
+      // so a node is revisited whenever its neighbour got different ones. If
+      // the two sides have different parallel factors (which per-unit factors
+      // make common), redistributing each side in turn can alternate forever.
+      // After a few visits a node therefore adopts the factors required by
+      // its external-buffer neighbours instead of redistributing its own.
+      const unsigned maxRedistributions = 8;
+      bool adoptNeighbourFactors = ++nodeVisitCount[node] > maxRedistributions;
 
       // If the correlation list is empty, which means the correlation analysis
       // failed, skip the current node.
@@ -273,9 +332,13 @@ struct ParallelizeDataflowNode
       }
 
       // Distribute factor based on the constraints and record in the map.
-      if (failed(getEvenlyDistributedFactors(parallelFactor, factors, band,
-                                             corrFactorsList,
-                                             /*powerOf2Constr=*/true)))
+      // When adopting, "factors" already holds the element-wise maximum of
+      // the external-buffer neighbours' factors and is kept as is.
+      if (adoptNeighbourFactors && !candidatesToRevisit.empty()) {
+        LLVM_DEBUG(llvm::dbgs() << "Adopt neighbour factors\n");
+      } else if (failed(getEvenlyDistributedFactors(parallelFactor, factors,
+                                                    band, corrFactorsList,
+                                                    /*powerOf2Constr=*/true)))
         factors = getDistributedFactors(parallelFactor, band);
       nodeUnrollFactorsMap[node] = factors;
 
@@ -320,7 +383,24 @@ struct ParallelizeDataflowNode
   void runOnOperation() override {
     auto func = getOperation();
     auto context = func.getContext();
+    if (!loadUnitFactors(func))
+      return signalPassFailure();
     getNodeParallelFactorMap(func);
+
+    // A stale factor file (different number of units) must not be applied to
+    // the wrong nodes silently.
+    if (!appliedUnitFactors.empty() && !requestedUnitFactors.empty() &&
+        appliedUnitFactors.size() != requestedUnitFactors.size()) {
+      func.emitError("unit factors file lists ")
+          << requestedUnitFactors.size() << " units but the function has "
+          << appliedUnitFactors.size() << " top-level dataflow nodes";
+      return signalPassFailure();
+    }
+    if (!appliedUnitFactors.empty() &&
+        (recordUnitFactors || !unitFactors.empty()))
+      func->setAttr("unit_unroll_factors",
+                    Builder(context).getI64ArrayAttr(appliedUnitFactors));
+
     if (correlationAware)
       applyCorrelationAwareUnroll(func);
     else {
@@ -335,12 +415,15 @@ struct ParallelizeDataflowNode
 
 private:
   llvm::SmallDenseMap<NodeOp, unsigned long> nodeParallelFactorMap;
+  SmallVector<int64_t> requestedUnitFactors;
+  SmallVector<int64_t> appliedUnitFactors;
 };
 } // namespace
 
 std::unique_ptr<Pass> scalehls::createParallelizeDataflowNodePass(
     unsigned loopUnrollFactor, bool unrollPointLoopOnly, bool complexityAware,
-    bool correlationAware) {
+    bool correlationAware, std::string unitFactors, bool recordUnitFactors) {
   return std::make_unique<ParallelizeDataflowNode>(
-      loopUnrollFactor, unrollPointLoopOnly, complexityAware, correlationAware);
+      loopUnrollFactor, unrollPointLoopOnly, complexityAware, correlationAware,
+      unitFactors, recordUnitFactors);
 }

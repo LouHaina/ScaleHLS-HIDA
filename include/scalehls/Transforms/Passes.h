@@ -58,7 +58,8 @@ std::unique_ptr<Pass> createLegalizeDataflowPass();
 std::unique_ptr<Pass> createLowerDataflowPass(bool splitExternalAccess = true);
 std::unique_ptr<Pass> createParallelizeDataflowNodePass(
     unsigned loopUnrollFactor = 1, bool unrollPointLoopOnly = false,
-    bool complexityAware = true, bool correlationAware = true);
+    bool complexityAware = true, bool correlationAware = true,
+    std::string unitFactors = "", bool recordUnitFactors = false);
 std::unique_ptr<Pass>
 createPlaceDataflowBufferPass(unsigned threshold = 1024,
                               bool placeExternalBuffer = true);
@@ -119,6 +120,13 @@ std::unique_ptr<Pass> createLayoutPartitionPass(int numTiles,
                                                 bool enableCommOpt,
                                                 double singleSlrUtilThreshold = 0.8);
 std::unique_ptr<Pass> createLayoutPartitionPass();
+
+/// Floorplan-related passes.
+std::unique_ptr<Pass>
+createExportDataflowGraphPass(std::string output = "graph.json",
+                              std::string topFunc = "forward");
+std::unique_ptr<Pass>
+createApplyFloorplanPass(std::string assignment = "assignment.json");
 
 #define GEN_PASS_CLASSES
 #include "scalehls/Transforms/Passes.h.inc"

@@ -23,6 +23,9 @@ add_mlir_library(MLIRScaleHLSTransforms
   Directive/LowerAffine.cpp
   Directive/QoREstimation.cpp
 
+  Floorplan/ApplyFloorplan.cpp
+  Floorplan/ExportDataflowGraph.cpp
+
   Loop/AffineLoopFusion.cpp
   Loop/AffineLoopOrderOpt.cpp
   Loop/AffineLoopPerfection.cpp

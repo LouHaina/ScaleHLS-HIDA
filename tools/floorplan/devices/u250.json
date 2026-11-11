@@ -1,0 +1,11 @@
+{
+  "name": "Alveo U250 (xcu250)",
+  "part": "xcu250-figd2104-2L-e",
+  "slrs": 4,
+  "sll_per_boundary": 17280,
+  "note": "approximate; verify with get_property NUM_TOP_SLLS [get_slrs SLR0] and report_utilization -slr",
+  "capacity_per_slr": {"lut": 432000, "ff": 864000, "dsp": 3072, "bram": 1344, "uram": 320},
+  "pblock_ranges": {"0": "SLR0", "1": "SLR1", "2": "SLR2", "3": "SLR3"},
+  "memory_anchors": {"axi": null, "port": null},
+  "memory_note": "one DDR4 controller per SLR; set memory_anchors.axi to the SLR of the bank the kernel uses"
+}

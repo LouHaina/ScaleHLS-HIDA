@@ -1,0 +1,5 @@
+{
+  "assignment": {"forward_node0": 0, "forward_node1": 1},
+  "units": ["forward_node0", "forward_node1"],
+  "channels": {"forward:0": {"depth": 6}}
+}

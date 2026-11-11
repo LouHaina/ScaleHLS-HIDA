@@ -127,8 +127,14 @@ public:
         scaledFactor = 1.0;
         roundedFlag = true;
       }
-      assert(scaledFactor == (unsigned)scaledFactor &&
-             "scaled factor is not integer");
+      // A strided access can make the scaled factor fractional (e.g. a
+      // factor of 7 with a stride of 2). Round it down and report it like the
+      // case above instead of aborting; a build without assertions already
+      // truncated here.
+      if (scaledFactor != (unsigned)scaledFactor) {
+        scaledFactor = (unsigned)scaledFactor;
+        roundedFlag = true;
+      }
       scaledFactors.push_back(scaledFactor);
     }
     return {scaledFactors, roundedFlag};

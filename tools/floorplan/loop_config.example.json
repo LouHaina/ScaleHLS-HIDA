@@ -1,0 +1,12 @@
+{
+  "workdir": "runs/resnet18_u280",
+  "device": "tools/floorplan/devices/u280.json",
+  "slrs": 3,
+  "period": 4.0,
+  "iters": 4,
+  "compile": "build/bin/scalehls-opt samples/pytorch/resnet18/resnet18.mlir -hida-pytorch-pipeline=\"top-func=forward loop-tile-size=8 loop-unroll-factor=8 floorplan-graph-output={graph} floorplan-assignment={assignment}\" | build/bin/scalehls-translate -scalehls-emit-hlscpp -emit-vitis-directives > {cpp}",
+  "hls": "vitis_hls -f tools/floorplan/hls_csynth.tcl -tclargs {cpp} {hls_dir}",
+  "dcp": "{hls_dir}/post_synth.dcp",
+  "vivado": "vivado -mode batch -source tools/floorplan/run_vivado_iter.tcl -tclargs {dcp} {tcl} {period} {out} {prev}",
+  "_windows_note": "with Vivado on Windows and the compiler in WSL2, use e.g. \"/mnt/c/Xilinx/Vivado/2023.2/bin/vivado.bat -mode batch -source ...\" for vivado and the matching vitis_hls.bat for hls; paths under /mnt/c are visible to both sides"
+}
